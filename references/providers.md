@@ -1,6 +1,6 @@
 # Embedding Providers
 
-Configure your embedding provider with `EMBEDDING_PROVIDER`, `EMBEDDING_MODEL`, and `EMBEDDING_DIM`. All embedding operations are handled by `memory.ts`.
+Configure your embedding provider with `AM_EMBEDDING_PROVIDER`, `AM_EMBEDDING_MODEL`, and `AM_EMBEDDING_DIM`. All env vars fall back to unprefixed names if the `AM_` version isn't set. All embedding operations are handled by `memory.ts`.
 
 ---
 
@@ -9,10 +9,10 @@ Configure your embedding provider with `EMBEDDING_PROVIDER`, `EMBEDDING_MODEL`, 
 Best for: air-gapped environments, cost-free operation, privacy.
 
 ```bash
-export EMBEDDING_PROVIDER=ollama
-export EMBEDDING_MODEL=mxbai-embed-large   # or nomic-embed-text
-export EMBEDDING_DIM=1024
-export OLLAMA_BASE_URL=http://localhost:11434  # default
+export AM_EMBEDDING_PROVIDER=ollama
+export AM_EMBEDDING_MODEL=mxbai-embed-large   # or nomic-embed-text
+export AM_EMBEDDING_DIM=1024
+export AM_OLLAMA_BASE_URL=http://localhost:11434  # default
 ```
 
 ### Pull a model first
@@ -33,13 +33,13 @@ API endpoint: `POST /api/embeddings` — response key: `embedding`.
 Best for: highest quality, production workloads.
 
 ```bash
-export EMBEDDING_PROVIDER=openai
-export EMBEDDING_MODEL=text-embedding-3-small   # or text-embedding-3-large
-export EMBEDDING_DIM=1536                        # 3072 for large
-export OPENAI_API_KEY=sk-...
+export AM_EMBEDDING_PROVIDER=openai
+export AM_EMBEDDING_MODEL=text-embedding-3-small   # or text-embedding-3-large
+export AM_EMBEDDING_DIM=1536                        # 3072 for large
+export AM_OPENAI_API_KEY=sk-...
 ```
 
-**Dimension reduction**: text-embedding-3 supports truncated dimensions. Set `EMBEDDING_DIM=256` to use 256 dims from text-embedding-3-small.
+**Dimension reduction**: text-embedding-3 supports truncated dimensions. Set `AM_EMBEDDING_DIM=256` to use 256 dims from text-embedding-3-small.
 
 **Batch limits**: Up to 2048 texts per request. Rate limits vary by tier (TPM-based).
 
@@ -50,10 +50,10 @@ export OPENAI_API_KEY=sk-...
 Best for: multilingual content, moderate cost.
 
 ```bash
-export EMBEDDING_PROVIDER=cohere
-export EMBEDDING_MODEL=embed-english-v3.0   # or embed-multilingual-v3.0
-export EMBEDDING_DIM=1024
-export COHERE_API_KEY=...
+export AM_EMBEDDING_PROVIDER=cohere
+export AM_EMBEDDING_MODEL=embed-english-v3.0   # or embed-multilingual-v3.0
+export AM_EMBEDDING_DIM=1024
+export AM_COHERE_API_KEY=...
 ```
 
 `input_type` matters for Cohere — `memory.ts` automatically uses `search_document` for storing and `search_query` for searching.
@@ -67,10 +67,10 @@ export COHERE_API_KEY=...
 Best for: code and technical content (`voyage-code-2`).
 
 ```bash
-export EMBEDDING_PROVIDER=voyage
-export EMBEDDING_MODEL=voyage-code-2   # or voyage-3 (general)
-export EMBEDDING_DIM=1536              # voyage-3 is 1024
-export VOYAGE_API_KEY=...
+export AM_EMBEDDING_PROVIDER=voyage
+export AM_EMBEDDING_MODEL=voyage-code-2   # or voyage-3 (general)
+export AM_EMBEDDING_DIM=1536              # voyage-3 is 1024
+export AM_VOYAGE_API_KEY=...
 ```
 
 `input_type`: `memory.ts` uses `"document"` for storing, `"query"` for searching.
@@ -84,10 +84,10 @@ export VOYAGE_API_KEY=...
 Best for: if you're already in the Google ecosystem.
 
 ```bash
-export EMBEDDING_PROVIDER=gemini
-export EMBEDDING_MODEL=gemini-embedding-001   # text-embedding-004 is deprecated
-export EMBEDDING_DIM=768
-export GEMINI_API_KEY=...
+export AM_EMBEDDING_PROVIDER=gemini
+export AM_EMBEDDING_MODEL=gemini-embedding-001   # text-embedding-004 is deprecated
+export AM_EMBEDDING_DIM=768
+export AM_GEMINI_API_KEY=...
 ```
 
 `taskType`: `memory.ts` uses `"RETRIEVAL_DOCUMENT"` for storing, `"RETRIEVAL_QUERY"` for searching.

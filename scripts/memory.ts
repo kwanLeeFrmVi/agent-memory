@@ -24,15 +24,19 @@
  *   bun memory.ts import <file.json> [--re-embed]
  *   bun memory.ts re-embed [--profile p] [--batch-size n]
  *
- * Required env vars:
- *   SUPABASE_URL, SUPABASE_SERVICE_KEY
- *   EMBEDDING_PROVIDER (ollama|openai|cohere|voyage|gemini)
- *   EMBEDDING_MODEL, EMBEDDING_DIM
- *   + provider key (OPENAI_API_KEY etc.)
- *
- * Optional env vars:
- *   MEMORY_SOURCE   — default source tag (default: "agent")
- *   MEMORY_PROFILE  — default profile partition (default: "default")
+ * Env vars (AM_ prefix takes priority, falls back to unprefixed):
+ *   AM_SUPABASE_URL / SUPABASE_URL
+ *   AM_SUPABASE_SERVICE_KEY / SUPABASE_SERVICE_KEY
+ *   AM_EMBEDDING_PROVIDER / EMBEDDING_PROVIDER  (ollama|openai|cohere|voyage|gemini)
+ *   AM_EMBEDDING_MODEL / EMBEDDING_MODEL
+ *   AM_EMBEDDING_DIM / EMBEDDING_DIM
+ *   AM_OPENAI_API_KEY / OPENAI_API_KEY           (if using OpenAI)
+ *   AM_COHERE_API_KEY / COHERE_API_KEY           (if using Cohere)
+ *   AM_VOYAGE_API_KEY / VOYAGE_API_KEY           (if using Voyage)
+ *   AM_GEMINI_API_KEY / GEMINI_API_KEY           (if using Gemini)
+ *   AM_OLLAMA_BASE_URL / OLLAMA_BASE_URL         (if using Ollama, default: http://localhost:11434)
+ *   AM_SOURCE / MEMORY_SOURCE                    (default: "agent")
+ *   AM_PROFILE / MEMORY_PROFILE                  (default: "default")
  */
 
 // ── Env ──────────────────────────────────────────────────────────────────────
@@ -58,9 +62,28 @@ async function loadEnv() {
 }
 
 function required(key: string): string {
-  const v = process.env[key];
-  if (!v) fatal(`Missing env var: ${key}`);
+  const v = env(key);
+  if (!v) fatal(`Missing env var: AM_${key} (or ${key})`);
   return v!;
+}
+
+/**
+ * Resolve env var with AM_ prefix priority, then fallback to unprefixed.
+ * For MEMORY_SOURCE/MEMORY_PROFILE, the AM_ form is AM_SOURCE/AM_PROFILE.
+ */
+function env(key: string): string | undefined {
+  return process.env[`AM_${key}`] ?? process.env[key];
+}
+
+/**
+ * Same as env() but for the two legacy-named optional vars.
+ */
+function envSource(): string {
+  return process.env.AM_SOURCE ?? process.env.MEMORY_SOURCE ?? "agent";
+}
+
+function envProfile(): string {
+  return process.env.AM_PROFILE ?? process.env.MEMORY_PROFILE ?? "default";
 }
 
 // ── Output ───────────────────────────────────────────────────────────────────
@@ -204,7 +227,7 @@ async function embed(text: string): Promise<number[]> {
 
   switch (provider) {
     case "ollama": {
-      const base = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
+      const base = env("OLLAMA_BASE_URL") ?? "http://localhost:11434";
       const res = await fetch(`${base}/api/embeddings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -217,8 +240,8 @@ async function embed(text: string): Promise<number[]> {
     }
 
     case "openai": {
-      const key = required("OPENAI_API_KEY");
-      const dim = process.env.EMBEDDING_DIM ? parseInt(process.env.EMBEDDING_DIM) : undefined;
+      const key = required("OPENAI_API_KEY"); // AM_OPENAI_API_KEY || OPENAI_API_KEY
+      const dim = env("EMBEDDING_DIM") ? parseInt(env("EMBEDDING_DIM")!) : undefined;
       const body: Record<string, unknown> = { model, input: text };
       if (dim) body.dimensions = dim;
       const res = await fetch("https://api.openai.com/v1/embeddings", {
@@ -297,7 +320,7 @@ async function embed(text: string): Promise<number[]> {
   }
 
   // Validate embedding dimension matches config
-  const expectedDim = process.env.EMBEDDING_DIM ? parseInt(process.env.EMBEDDING_DIM) : null;
+  const expectedDim = env("EMBEDDING_DIM") ? parseInt(env("EMBEDDING_DIM")!) : null;
   if (expectedDim && embedding.length !== expectedDim) {
     fatal(`Embedding dimension mismatch: got ${embedding.length}, expected ${expectedDim} (EMBEDDING_DIM). Check your model/provider config.`);
   }
@@ -307,7 +330,7 @@ async function embed(text: string): Promise<number[]> {
 
 async function embedForQuery(text: string): Promise<number[]> {
   // Same as embed() but uses query-optimised input_type for providers that distinguish
-  const provider = process.env.EMBEDDING_PROVIDER ?? "";
+  const provider = env("EMBEDDING_PROVIDER") ?? "";
   const model = required("EMBEDDING_MODEL");
 
   if (provider === "cohere") {
@@ -375,8 +398,8 @@ async function cmdStore(positional: string[], flags: Record<string, string | boo
   if (!content) fatal("Usage: store <content> [--tags t1,t2] [--source s] [--profile p] [--ttl days] [--metadata '{}']");
 
   const tagsRaw = flag(flags, "tags");
-  const source = flag(flags, "source") ?? process.env.MEMORY_SOURCE ?? "agent";
-  const profile = flag(flags, "profile") ?? process.env.MEMORY_PROFILE ?? "default";
+  const source = flag(flags, "source") ?? envSource();
+  const profile = flag(flags, "profile") ?? envProfile();
   const ttlDays = flag(flags, "ttl");
   const metaRaw = flag(flags, "metadata");
 
@@ -389,7 +412,7 @@ async function cmdStore(positional: string[], flags: Record<string, string | boo
     profile,
     tags: tagsRaw ? parseTags(tagsRaw) : [],
     metadata: metaRaw ? safeJsonParse(metaRaw, "--metadata") : {},
-    embedding_model: process.env.EMBEDDING_MODEL ?? null,
+    embedding_model: env("EMBEDDING_MODEL") ?? null,
   };
 
   if (ttlDays) {
@@ -495,7 +518,7 @@ async function cmdUpdate(positional: string[], flags: Record<string, string | bo
   if (content) {
     patch.content = content;
     patch.embedding = await embed(content); // re-embed when content changes
-    patch.embedding_model = process.env.EMBEDDING_MODEL ?? null;
+    patch.embedding_model = env("EMBEDDING_MODEL") ?? null;
   }
 
   const confidence = flag(flags, "confidence");
@@ -608,7 +631,7 @@ async function cmdHealth() {
     // Call hybrid_search with a zero-length vector to trigger param error (not "function not found")
     await rpc("hybrid_search", {
       query_text: "__health_check__",
-      query_embedding: Array(parseInt(process.env.EMBEDDING_DIM ?? "1024")).fill(0),
+      query_embedding: Array(parseInt(env("EMBEDDING_DIM") ?? "1024")).fill(0),
       match_count: 1,
       match_threshold: 0.99,
     });
@@ -637,13 +660,13 @@ async function cmdHealth() {
     const vec = await embed("health check test");
     checks.embedding_provider = "ok";
     checks.embedding_dim = vec.length;
-    checks.embedding_model = process.env.EMBEDDING_MODEL;
+    checks.embedding_model = env("EMBEDDING_MODEL");
   } catch {
     checks.embedding_provider = "failed";
   }
 
   // 4. Check dimension match
-  const expectedDim = process.env.EMBEDDING_DIM ? parseInt(process.env.EMBEDDING_DIM) : null;
+  const expectedDim = env("EMBEDDING_DIM") ? parseInt(env("EMBEDDING_DIM")!) : null;
   if (expectedDim && typeof checks.embedding_dim === "number") {
     checks.dim_match = checks.embedding_dim === expectedDim ? "ok" : `mismatch: got ${checks.embedding_dim}, expected ${expectedDim}`;
   }
@@ -728,7 +751,7 @@ async function cmdImport(positional: string[], flags: Record<string, string | bo
         confidence: mem.confidence ?? 0.8,
         compression_level: mem.compression_level ?? 0,
         original_content: mem.original_content ?? null,
-        embedding_model: reEmbed ? (process.env.EMBEDDING_MODEL ?? null) : (mem.embedding_model ?? null),
+        embedding_model: reEmbed ? (env("EMBEDDING_MODEL") ?? null) : (mem.embedding_model ?? null),
       };
 
       if (reEmbed) {
@@ -773,7 +796,7 @@ async function cmdReEmbed(flags: Record<string, string | boolean>) {
         const newEmbedding = await embed(row.content as string);
         await supa("PATCH", "/rest/v1/memories", {
           embedding: newEmbedding,
-          embedding_model: process.env.EMBEDDING_MODEL ?? null,
+          embedding_model: env("EMBEDDING_MODEL") ?? null,
         }, { id: `eq.${row.id}` });
         processed++;
         if (processed % 10 === 0) {
@@ -788,7 +811,7 @@ async function cmdReEmbed(flags: Record<string, string | boolean>) {
     if (rows.length < batchSize) break;
   }
 
-  out({ re_embedded: processed, errors, model: process.env.EMBEDDING_MODEL });
+  out({ re_embedded: processed, errors, model: env("EMBEDDING_MODEL") });
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -818,9 +841,14 @@ commands:
   import   <file.json> [--re-embed]
   re-embed [--profile p] [--batch-size n]
 
-env defaults:
-  MEMORY_SOURCE   default source tag (default: "agent")
-  MEMORY_PROFILE  default profile (default: "default")`);
+env vars (AM_ prefix takes priority, falls back to unprefixed):
+  AM_SUPABASE_URL         Supabase project URL
+  AM_SUPABASE_SERVICE_KEY service_role key
+  AM_EMBEDDING_PROVIDER   ollama | openai | cohere | voyage | gemini
+  AM_EMBEDDING_MODEL      model name for chosen provider
+  AM_EMBEDDING_DIM        must match model output dimension
+  AM_SOURCE               default source tag (default: "agent")
+  AM_PROFILE              default profile (default: "default")`);
   process.exit(0);
 }
 

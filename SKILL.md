@@ -41,30 +41,33 @@ references/
 
 Read reference files only when you need parameter details or troubleshooting. If just getting started, read `setup.md` first.
 
-## Environment variables (required)
+## Environment variables
+
+All env vars use the `AM_` prefix to avoid collisions. Falls back to unprefixed if `AM_` not set (e.g. `AM_SUPABASE_URL` → `SUPABASE_URL`), so multiple Supabase projects can coexist.
 
 ```bash
-SUPABASE_URL=https://<project-ref>.supabase.co
-SUPABASE_SERVICE_KEY=<service_role_key>       # NOT anon key — full access needed
+# Required — Supabase connection
+AM_SUPABASE_URL=https://<project-ref>.supabase.co
+AM_SUPABASE_SERVICE_KEY=<service_role_key>       # NOT anon key — full access needed
 
-# Pick ONE embedding provider:
-EMBEDDING_PROVIDER=ollama                      # ollama | openai | cohere | voyage | gemini
-EMBEDDING_MODEL=mxbai-embed-large             # model name for chosen provider
-EMBEDDING_DIM=1024                             # must match model's output dimension
+# Required — Pick ONE embedding provider:
+AM_EMBEDDING_PROVIDER=ollama                      # ollama | openai | cohere | voyage | gemini
+AM_EMBEDDING_MODEL=mxbai-embed-large             # model name for chosen provider
+AM_EMBEDDING_DIM=1024                             # must match model's output dimension
 
 # Provider-specific API keys (only the one you use):
-OLLAMA_BASE_URL=http://localhost:11434         # if using Ollama
-OPENAI_API_KEY=sk-...                         # if using OpenAI
-COHERE_API_KEY=...                            # if using Cohere
-VOYAGE_API_KEY=...                            # if using Voyage AI
-GEMINI_API_KEY=...                            # if using Google Gemini
+AM_OLLAMA_BASE_URL=http://localhost:11434         # if using Ollama
+AM_OPENAI_API_KEY=sk-...                         # if using OpenAI
+AM_COHERE_API_KEY=...                            # if using Cohere
+AM_VOYAGE_API_KEY=...                            # if using Voyage AI
+AM_GEMINI_API_KEY=...                            # if using Google Gemini
 ```
 
-### Optional env defaults
+### Optional defaults
 
 ```bash
-MEMORY_SOURCE=agent                            # default source tag when --source not passed
-MEMORY_PROFILE=default                         # default profile when --profile not passed
+AM_SOURCE=agent                                   # default source tag when --source not passed
+AM_PROFILE=default                                # default profile when --profile not passed
 ```
 
 Store these in `.env` or your shell profile. The skill reads them for all operations.

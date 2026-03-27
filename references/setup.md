@@ -27,7 +27,7 @@ Choose your provider/model and note the output dimension. **You must pick this b
 | Voyage AI | voyage-3 | 1024 |
 | Google Gemini | gemini-embedding-001 | 768 |
 
-Set `EMBEDDING_DIM` in your env to match. Default in schema.sql is **1024** (works for Ollama mxbai-embed-large, Cohere, Voyage-3).
+Set `AM_EMBEDDING_DIM` in your env to match. Default in schema.sql is **1024** (works for Ollama mxbai-embed-large, Cohere, Voyage-3).
 
 ## Step 3: Run schema.sql
 
@@ -38,35 +38,46 @@ The schema creates:
 - `memory_edges` table for the knowledge graph
 - HNSW index for fast vector search
 - GIN index for full-text search
-- Five RPC functions: `match_memories`, `hybrid_search`, `find_related_memories`, `get_memories_by_tag`, `cleanup_expired_memories`
+- Seven RPC functions: `match_memories`, `hybrid_search`, `find_related_memories`, `get_memories_by_tag`, `cleanup_expired_memories`, `bump_access_count`, `memory_stats`
 
 ## Step 4: Configure environment variables
 
-```bash
-# Required
-export SUPABASE_URL="https://<project-ref>.supabase.co"
-export SUPABASE_SERVICE_KEY="<your-service-role-key>"  # Settings → API → service_role
+All env vars use the `AM_` prefix to avoid collisions with other tools. If an `AM_`-prefixed var is not set, `memory.ts` falls back to the unprefixed name (e.g. `AM_SUPABASE_URL` → `SUPABASE_URL`). This lets you run multiple Supabase projects side by side.
 
-# Embedding provider
-export EMBEDDING_PROVIDER="ollama"          # ollama | openai | cohere | voyage | gemini
-export EMBEDDING_MODEL="mxbai-embed-large"
-export EMBEDDING_DIM="1024"
+```bash
+# Required — Supabase connection
+export AM_SUPABASE_URL="https://<project-ref>.supabase.co"
+export AM_SUPABASE_SERVICE_KEY="<your-service-role-key>"  # Settings → API → service_role
+
+# Required — Embedding provider
+export AM_EMBEDDING_PROVIDER="ollama"          # ollama | openai | cohere | voyage | gemini
+export AM_EMBEDDING_MODEL="mxbai-embed-large"
+export AM_EMBEDDING_DIM="1024"
 
 # Provider API key (only the one you use)
-export OLLAMA_BASE_URL="http://localhost:11434"
+export AM_OLLAMA_BASE_URL="http://localhost:11434"   # default for Ollama
+# export AM_OPENAI_API_KEY="sk-..."
+# export AM_COHERE_API_KEY="..."
+# export AM_VOYAGE_API_KEY="..."
+# export AM_GEMINI_API_KEY="..."
+
+# Optional defaults
+export AM_SOURCE="agent"                       # default --source value
+export AM_PROFILE="default"                    # default --profile value
 ```
 
 Get your Supabase keys from: **Project Settings → API**.
 Use the **service_role** key (not the anon key) so the skill can insert and delete.
 
+### Multi-project setup
+
+To point Agent Memory at a different Supabase project than other tools, just set the `AM_` vars. The unprefixed vars (`SUPABASE_URL`, `OPENAI_API_KEY`, etc.) remain available for other tools — `memory.ts` only reads them as fallbacks.
+
 ## Step 5: Verify
 
 ```bash
-# Test connection
-curl "$SUPABASE_URL/rest/v1/memories?limit=1" \
-  -H "Authorization: Bearer $SUPABASE_SERVICE_KEY"
-
-# Should return [] or a list of memories (not an error)
+# Quick health check (tests Supabase, RPCs, and embedding provider)
+bun memory.ts health
 ```
 
 ## Step 6: Test embedding generation
@@ -77,17 +88,22 @@ Follow `providers.md` to verify your embedding provider is working before storin
 
 If you need to switch models/providers with a different dimension:
 
+```bash
+# 1. Export first
+bun memory.ts export --output memories_backup.json
+
+# 2. Drop and recreate tables in Supabase SQL Editor
+```
+
 ```sql
--- Drop and recreate (loses all data — export first!)
 drop table memory_edges;
 drop table memories;
 -- Then re-run schema.sql with the new dimension
 ```
 
-To export before dropping:
 ```bash
-curl "$SUPABASE_URL/rest/v1/memories?select=id,content,metadata,tags,source,created_at" \
-  -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" > memories_backup.json
+# 3. Import with re-embedding
+bun memory.ts import memories_backup.json --re-embed
 ```
 
 ## Row-Level Security (optional but recommended for multi-user)
