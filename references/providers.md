@@ -22,10 +22,6 @@ ollama pull mxbai-embed-large   # 334M params, strong retrieval quality
 ollama pull nomic-embed-text     # 137M params, long context (8K tokens)
 ```
 
-API endpoint: `POST /api/embeddings` — response key: `embedding`.
-
-**Batch limits**: Single text per request. No batch API.
-
 ---
 
 ## OpenAI
@@ -38,10 +34,6 @@ export AM_EMBEDDING_MODEL=text-embedding-3-small   # or text-embedding-3-large
 export AM_EMBEDDING_DIM=1536                        # 3072 for large
 export AM_OPENAI_API_KEY=sk-...
 ```
-
-**Dimension reduction**: text-embedding-3 supports truncated dimensions. Set `AM_EMBEDDING_DIM=256` to use 256 dims from text-embedding-3-small.
-
-**Batch limits**: Up to 2048 texts per request. Rate limits vary by tier (TPM-based).
 
 ---
 
@@ -56,10 +48,6 @@ export AM_EMBEDDING_DIM=768
 export AM_COHERE_API_KEY=...
 ```
 
-`input_type` matters for Cohere — `memory.ts` automatically uses `search_document` for storing and `search_query` for searching.
-
-**Batch limits**: Up to 96 texts per request. Rate limit: 10,000 calls/min (production key).
-
 ---
 
 ## Voyage AI
@@ -73,10 +61,6 @@ export AM_EMBEDDING_DIM=1536              # voyage-3 is 1024
 export AM_VOYAGE_API_KEY=...
 ```
 
-`input_type`: `memory.ts` uses `"document"` for storing, `"query"` for searching.
-
-**Batch limits**: Up to 128 texts per request. Rate limit: 300 RPM / 1M TPM.
-
 ---
 
 ## Google Gemini
@@ -85,29 +69,25 @@ Best for: if you're already in the Google ecosystem.
 
 ```bash
 export AM_EMBEDDING_PROVIDER=gemini
-export AM_EMBEDDING_MODEL=gemini-embedding-001   # text-embedding-004 is deprecated
+export AM_EMBEDDING_MODEL=gemini-embedding-001
 export AM_EMBEDDING_DIM=768
 export AM_GEMINI_API_KEY=...
 ```
-
-`taskType`: `memory.ts` uses `"RETRIEVAL_DOCUMENT"` for storing, `"RETRIEVAL_QUERY"` for searching.
-
-**Batch limits**: Up to 100 texts per request. Rate limit: 1500 RPM.
 
 ---
 
 ## Provider comparison
 
-| Provider       | Dim  | Context    | Cost   | Privacy | Batch limit | Notes                   |
-| -------------- | ---- | ---------- | ------ | ------- | ----------- | ----------------------- |
-| Ollama (mxbai) | 768  | 512 tokens | Free   | Local   | 1           | Good general quality    |
-| Ollama (nomic) | 768  | 8K tokens  | Free   | Local   | 1           | Best for long memories  |
-| OpenAI 3-small | 1536 | -          | Low    | Remote  | 2048        | Most common default     |
-| OpenAI 3-large | 3072 | -          | Medium | Remote  | 2048        | Highest quality         |
-| Cohere v3      | 1024 | 512 tokens | Low    | Remote  | 96          | Strong multilingual     |
-| Voyage code-2  | 1536 | 16K tokens | Low    | Remote  | 128         | Best for code retrieval |
-| Voyage 3       | 1024 | 32K tokens | Low    | Remote  | 128         | Best long-context       |
-| Gemini         | 768  | -          | Low    | Remote  | 100         | Google ecosystem        |
+| Provider       | Dim  | Context    | Cost   | Privacy | Notes                   |
+| -------------- | ---- | ---------- | ------ | ------- | ----------------------- |
+| Ollama (mxbai) | 768  | 512 tokens | Free   | Local   | Good general quality    |
+| Ollama (nomic) | 768  | 8K tokens  | Free   | Local   | Best for long memories  |
+| OpenAI 3-small | 1536 | -          | Low    | Remote  | Most common default     |
+| OpenAI 3-large | 3072 | -          | Medium | Remote  | Highest quality         |
+| Cohere v3      | 1024 | 512 tokens | Low    | Remote  | Strong multilingual     |
+| Voyage code-2  | 1536 | 16K tokens | Low    | Remote  | Best for code retrieval |
+| Voyage 3       | 1024 | 32K tokens | Low    | Remote  | Best long-context       |
+| Gemini         | 768  | -          | Low    | Remote  | Google ecosystem        |
 
 **Recommendation**: Start with Ollama `mxbai-embed-large` (free, local, 768-dim). Switch to `voyage-code-2` if memories are primarily code/technical content and you want maximum retrieval quality.
 
@@ -119,8 +99,8 @@ If you switch embedding providers, existing embeddings become incompatible (diff
 
 ```bash
 # 1. Update env vars to new provider
-# 2. Re-embed all memories
-bun memory.ts re-embed --batch-size 50
+# 2. Check how to re-embed all memories
+bun memory.ts re-embed --help
 
 # 3. If dimension changed, update schema.sql and recreate the table
 ```

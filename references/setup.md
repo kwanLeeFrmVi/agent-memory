@@ -33,13 +33,7 @@ Set `AM_EMBEDDING_DIM` in your env to match. Default in schema.sql is **768** (w
 
 Open `scripts/schema.sql`, replace `768` with your chosen dimension if different, then paste the entire file into Supabase SQL Editor and run it.
 
-The schema creates:
-
-- `memories` table with vector embedding, full-text search, tags, TTL, compression fields
-- `memory_edges` table for the knowledge graph
-- HNSW index for fast vector search
-- GIN index for full-text search
-- Seven RPC functions: `match_memories`, `hybrid_search`, `find_related_memories`, `get_memories_by_tag`, `cleanup_expired_memories`, `bump_access_count`, `memory_stats`
+The schema creates the `memories` and `memory_edges` tables, indexes, and required RPC functions.
 
 ## Step 4: Configure environment variables
 
@@ -70,10 +64,6 @@ export AM_PROFILE="default"                    # default --profile value
 Get your Supabase keys from: **Project Settings → API**.
 Use the **service_role** key (not the anon key) so the skill can insert and delete.
 
-### Multi-project setup
-
-To point Agent Memory at a different Supabase project than other tools, just set the `AM_` vars. The unprefixed vars (`SUPABASE_URL`, `OPENAI_API_KEY`, etc.) remain available for other tools — `memory.ts` only reads them as fallbacks.
-
 ## Step 5: Verify
 
 ```bash
@@ -81,13 +71,9 @@ To point Agent Memory at a different Supabase project than other tools, just set
 bun memory.ts health
 ```
 
-## Step 6: Test embedding generation
-
-Follow `providers.md` to verify your embedding provider is working before storing the first memory.
-
 ## Changing embedding dimension later
 
-If you need to switch models/providers with a different dimension:
+If you need to switch models/providers with a different dimension, run `bun memory.ts re-embed --help` for usage on re-embedding, or if you need to drop/recreate tables:
 
 ```bash
 # 1. Export first

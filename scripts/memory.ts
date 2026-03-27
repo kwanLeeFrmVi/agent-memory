@@ -551,7 +551,7 @@ async function cmdGet(positional: string[]) {
 }
 
 async function cmdRecent(flags: Record<string, string | boolean>) {
-  const limit = flag(flags, "limit") ?? "20";
+  const limit = flag(flags, "limit") ?? "3";
   validatePositive(parseInt(limit), "--limit");
   const source = flag(flags, "source");
   const profile = flag(flags, "profile");
@@ -567,6 +567,10 @@ async function cmdRecent(flags: Record<string, string | boolean>) {
   if (profile) pairs.push(["profile", `eq.${profile}`]);
   if (afterDate) pairs.push(["created_at", `gte.${afterDate}`]);
   if (beforeDate) pairs.push(["created_at", `lte.${beforeDate}`]);
+  
+  // Filter out expired memories: expires_at is null OR expires_at > now
+  const now = new Date().toISOString();
+  pairs.push(["or", `expires_at.is.null,expires_at.gt.${now}`]);
 
   const results = await supa("GET", "/rest/v1/memories", undefined, pairs);
   out(results);

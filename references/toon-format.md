@@ -1,8 +1,8 @@
-# TOON Output Format
+# TOON Format
 
-`memory.ts` outputs data in **TOON format** (compact YAML-like syntax) to save LLM tokens.
+`memory.ts` outputs data in **TOON**, a compact YAML-like syntax designed to save LLM tokens. It is highly readable, but if you need standard JSON for scripting or parsing, you can decode it.
 
-## Decode to JSON
+## Decode TOON to JSON
 
 ```bash
 echo "<toon_string>" | bunx --bun @toon-format/cli --decode
@@ -18,7 +18,7 @@ tags:
   - important
 ```
 
-**JSON:**
+**JSON Equivalent:**
 
 ```json
 {
