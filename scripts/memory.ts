@@ -93,7 +93,19 @@ function envEmbeddingDim(): number {
 // ── Output ───────────────────────────────────────────────────────────────────
 
 function out(data: unknown) {
-  console.log(JSON.stringify(data, null, 2));
+  const jsonStr = JSON.stringify(data);
+  try {
+    const proc = Bun.spawnSync(["bunx", "--bun", "@toon-format/cli"], {
+      stdin: Buffer.from(jsonStr)
+    });
+    if (proc.exitCode === 0) {
+      console.log(proc.stdout.toString().trimEnd());
+    } else {
+      console.log(JSON.stringify(data, null, 2));
+    }
+  } catch {
+    console.log(JSON.stringify(data, null, 2));
+  }
 }
 
 function fatal(msg: string, detail?: unknown): never {
@@ -1189,36 +1201,37 @@ async function cmdSuggestTags(positional: string[], flags: Record<string, string
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-await loadEnv();
+const GLOBAL_HELP = `usage: bun memory.ts <command> [args]
 
-const args = process.argv.slice(2);
-if (args.length === 0) {
-  console.log(`usage: bun memory.ts <command> [args]
+Agent memory CLI. Handles embedding generation + Supabase calls in one step.
+Designed for LLM use: minimal output, clean JSON, one command per operation.
 
 commands:
-  store    <content> [--tags t1,t2] [--source s] [--profile p] [--ttl days] [--metadata '{}'] [--dedup threshold] [--auto-link]
-  search   <query>   [--limit n] [--threshold f] [--profile p] [--tag t] [--source s] [--min-confidence f] [--after date] [--before date]
-  get      <uuid>
-  recent   [--limit n] [--source s] [--profile p] [--after date] [--before date]
-  tag      <tag>     [--limit n] [--profile p]
-  update   <uuid>    [--content text] [--confidence f] [--tags t1,t2] [--metadata '{}']
-  delete   <uuid>
-  link     <uuid-a> <uuid-b> [--type supports|contradicts|expands|related|depends_on|similar] [--strength f]
-  unlink   <uuid-a> <uuid-b> [--type edge-type]
-  related  <uuid>    [--depth n] [--min-strength f]
-  cleanup
-  stats    [--profile p]
-  health
-  profiles
-  export   [--profile p] [--output file.json]
-  import   <file.json> [--re-embed]
-  re-embed [--profile p] [--batch-size n]
-  compress <uuid> <compressed-text>
-  bulk-delete [--tag t] [--source s] [--profile p] [--before date] [--after date] [--dry-run]
-  context  <query>   [--limit n] [--depth d] [--profile p]
-  store-batch <file.json> [--dedup threshold] [--auto-link] [--profile p] [--source s]
-  merge    <uuid1> <uuid2> [uuid3...] [--delete-originals] [--separator text]
-  suggest-tags <content> [--limit n]
+  store        Store a new memory
+  search       Search for memories (hybrid semantic + keyword)
+  get          Retrieve a specific memory by UUID
+  recent       List recently stored memories
+  tag          Find memories by a specific tag
+  update       Modify an existing memory
+  delete       Delete a memory
+  link         Create a relationship edge between two memories
+  unlink       Remove a relationship edge
+  related      Explore the knowledge graph from a specific memory
+  cleanup      Remove expired memories based on TTL
+  stats        Show memory database statistics
+  health       Check system health and database connectivity
+  profiles     List all memory profiles
+  export       Export memories to JSON
+  import       Import memories from JSON
+  re-embed     Re-generate embeddings for existing memories
+  compress     Summarize a verbose memory
+  bulk-delete  Delete multiple memories by criteria
+  context      Load context for a topic (search + graph combined)
+  store-batch  Store multiple memories from a JSON array file
+  merge        Combine multiple memories into one
+  suggest-tags Suggest tags for new content
+
+Run \`bun memory.ts <command> --help\` for details on a specific command.
 
 env vars (AM_ prefix takes priority, falls back to unprefixed):
   AM_SUPABASE_URL         Supabase project URL
@@ -1227,11 +1240,204 @@ env vars (AM_ prefix takes priority, falls back to unprefixed):
   AM_EMBEDDING_MODEL      model name for chosen provider
   AM_EMBEDDING_DIM        embedding dimension (default: 1024)
   AM_SOURCE               default source tag (default: "agent")
-  AM_PROFILE              default profile (default: "default")`);
+  AM_PROFILE              default profile (default: "default")`;
+
+const COMMAND_HELP: Record<string, string> = {
+  store: `usage: bun memory.ts store <content> [flags]
+
+Store a new memory and automatically generate its embedding.
+
+flags:
+  --tags t1,t2     Comma-separated list of tags
+  --source s       Source identifier (e.g., agent name)
+  --profile p      Memory profile/partition (default: "default")
+  --ttl days       Time-to-live in days before automatic deletion
+  --metadata '{}'  Additional JSON metadata
+  --dedup thres    Skip storing if similarity >= threshold (or use without value for 0.95)
+  --auto-link      Automatically link to similar existing memories`,
+
+  search: `usage: bun memory.ts search <query> [flags]
+
+Search memories using hybrid search (semantic vector similarity + full-text keyword matching).
+
+flags:
+  --limit n          Max results to return (default: 10)
+  --threshold f      Minimum similarity threshold (0.0 to 1.0, default: 0.3)
+  --profile p        Filter by profile
+  --tag t            Filter by specific tag
+  --source s         Filter by source
+  --min-confidence f Filter by minimum confidence score
+  --after date       Filter by created_at >= date (ISO 8601)
+  --before date      Filter by created_at <= date (ISO 8601)`,
+
+  get: `usage: bun memory.ts get <uuid>
+
+Retrieve a specific memory by its UUID. Returns clean JSON without the raw embedding vector.`,
+
+  recent: `usage: bun memory.ts recent [flags]
+
+List the most recently stored memories.
+
+flags:
+  --limit n      Max results to return (default: 20)
+  --source s     Filter by source
+  --profile p    Filter by profile
+  --after date   Filter by created_at >= date
+  --before date  Filter by created_at <= date`,
+
+  tag: `usage: bun memory.ts tag <tag> [flags]
+
+Retrieve memories that have a specific tag.
+
+flags:
+  --limit n      Max results to return (default: 20)
+  --profile p    Filter by profile`,
+
+  update: `usage: bun memory.ts update <uuid> [flags]
+
+Update an existing memory. If --content is updated, its embedding will be automatically regenerated.
+
+flags:
+  --content text   New text content
+  --confidence f   New confidence score (0.0 to 1.0)
+  --tags t1,t2     New comma-separated tags (replaces existing)
+  --metadata '{}'  New JSON metadata (replaces existing)`,
+
+  delete: `usage: bun memory.ts delete <uuid>
+
+Delete a specific memory by its UUID.`,
+
+  link: `usage: bun memory.ts link <uuid-a> <uuid-b> [flags]
+
+Create a typed directional edge between two memories in the knowledge graph.
+
+flags:
+  --type edge      Type of relationship (supports, contradicts, expands, related, depends_on, similar). Default: related.
+  --strength f     Strength of the relationship (0.0 to 1.0, default: 0.7)`,
+
+  unlink: `usage: bun memory.ts unlink <uuid-a> <uuid-b> [flags]
+
+Remove a relationship edge between two memories.
+
+flags:
+  --type edge      Only delete edges of this specific type`,
+
+  related: `usage: bun memory.ts related <uuid> [flags]
+
+Explore the knowledge graph starting from a specific memory.
+
+flags:
+  --depth n        Max traversal hops (default: 2)
+  --min-strength f Minimum edge strength to follow (default: 0.5)`,
+
+  cleanup: `usage: bun memory.ts cleanup
+
+Remove all memories whose expires_at date is in the past. Returns the number of deleted memories.`,
+
+  stats: `usage: bun memory.ts stats [flags]
+
+Show database statistics, including total memories, counts by profile/source, and edge counts.
+
+flags:
+  --profile p      Filter stats to a specific profile`,
+
+  health: `usage: bun memory.ts health
+
+Check connectivity to Supabase, verify RPC functions exist, and validate embedding provider setup.`,
+
+  profiles: `usage: bun memory.ts profiles
+
+List all active memory profiles and the number of memories in each.`,
+
+  export: `usage: bun memory.ts export [flags]
+
+Export memories to JSON format (excludes raw embedding vectors).
+
+flags:
+  --profile p      Only export memories from this profile
+  --output file    Save to a file instead of printing to stdout`,
+
+  import: `usage: bun memory.ts import <file.json> [flags]
+
+Import memories from a JSON file.
+
+flags:
+  --re-embed       Regenerate embeddings for all imported memories using the current provider`,
+
+  "re-embed": `usage: bun memory.ts re-embed [flags]
+
+Regenerate embeddings for existing memories using the currently configured provider. Useful when switching embedding models.
+
+flags:
+  --profile p      Only re-embed memories in this profile
+  --batch-size n   Number of memories to process at once (default: 50)`,
+
+  compress: `usage: bun memory.ts compress <uuid> <compressed-text>
+
+Replace a verbose memory's content with a shorter summarized version. The original content is preserved in the original_content field.`,
+
+  "bulk-delete": `usage: bun memory.ts bulk-delete [flags]
+
+Delete multiple memories matching specific criteria. ALWAYS use --dry-run first to check how many will be deleted.
+
+flags:
+  --tag t          Delete memories with this tag
+  --source s       Delete memories from this source
+  --profile p      Delete memories in this profile
+  --before date    Delete memories created before this date
+  --after date     Delete memories created after this date
+  --dry-run        Print count of matched memories without deleting`,
+
+  context: `usage: bun memory.ts context <query> [flags]
+
+Load context for a task. Performs a hybrid search and follows knowledge graph edges from the results in one step.
+
+flags:
+  --limit n        Max search results to return initially (default: 5)
+  --depth d        Graph traversal depth from search results (default: 2)
+  --profile p      Filter by profile`,
+
+  "store-batch": `usage: bun memory.ts store-batch <file.json> [flags]
+
+Store multiple memories from a JSON array file. Expected format: [{"content": "...", "tags": [...]}, ...]
+
+flags:
+  --dedup thres    Skip storing items if similarity >= threshold
+  --auto-link      Automatically link new memories to similar existing ones
+  --profile p      Default profile for items without one
+  --source s       Default source for items without one`,
+
+  merge: `usage: bun memory.ts merge <uuid1> <uuid2> [uuid3...] [flags]
+
+Combine multiple memories into a single new memory. Concatenates content, merges tags, and optionally links or deletes the originals.
+
+flags:
+  --delete-originals Remove the original memories after merging
+  --separator text   String used to join contents (default: "\\n---\\n")`,
+
+  "suggest-tags": `usage: bun memory.ts suggest-tags <content> [flags]
+
+Suggest tags for new content based on similar existing memories in the database.
+
+flags:
+  --limit n        Max number of tags to suggest (default: 5)`
+};
+
+await loadEnv();
+
+const args = process.argv.slice(2);
+const { positional, flags: cliFlags } = parseArgs(args);
+
+if (cliFlags.help || cliFlags.h || args.length === 0) {
+  const cmd = positional[0];
+  if (cmd && COMMAND_HELP[cmd]) {
+    console.log(COMMAND_HELP[cmd]);
+  } else {
+    console.log(GLOBAL_HELP);
+  }
   process.exit(0);
 }
 
-const { positional, flags: cliFlags } = parseArgs(args);
 const cmd = positional[0];
 const rest = positional.slice(1);
 
