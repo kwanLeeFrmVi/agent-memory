@@ -32,9 +32,9 @@ scripts/
   schema.sql     → SQL to paste into Supabase SQL Editor (run once)
 references/
   setup.md       → First-time: SQL schema, env config, pgvector setup
-  operations.md  → Full field reference and edge cases
-  search.md      → Search parameters, graph traversal details
-  providers.md   → Embedding provider config (Ollama, OpenAI, Cohere, Voyage, Gemini)
+  operations.md  → Field reference: metadata schema, edge types, compression
+  search.md      → Search parameters, RRF scoring, graph traversal details
+  providers.md   → Embedding provider config + batch limits (Ollama, OpenAI, Cohere, Voyage, Gemini)
 ```
 
 **Always use `memory.ts` for operations** — it handles embedding generation and Supabase calls in one step, so you never need to manage embeddings manually or chain curl commands.
@@ -60,6 +60,13 @@ VOYAGE_API_KEY=...                            # if using Voyage AI
 GEMINI_API_KEY=...                            # if using Google Gemini
 ```
 
+### Optional env defaults
+
+```bash
+MEMORY_SOURCE=agent                            # default source tag when --source not passed
+MEMORY_PROFILE=default                         # default profile when --profile not passed
+```
+
 Store these in `.env` or your shell profile. The skill reads them for all operations.
 
 ## Sub-skill routing
@@ -67,15 +74,22 @@ Store these in `.env` or your shell profile. The skill reads them for all operat
 | User intent                          | Command                                                                             |
 | ------------------------------------ | ----------------------------------------------------------------------------------- |
 | "remember", "store", "save"          | `bun memory.ts store "text" [--tags t1,t2] [--source s] [--profile p] [--ttl days]` |
-| "recall", "what do you know", "find" | `bun memory.ts search "query" [--limit n] [--profile p]`                            |
+| "recall", "what do you know", "find" | `bun memory.ts search "query" [--limit n] [--profile p] [--min-confidence f]`       |
+| "get this memory"                    | `bun memory.ts get <uuid>`                                                          |
 | "related to", "knowledge graph"      | `bun memory.ts related <uuid> [--depth n]`                                          |
 | "forget", "delete"                   | `bun memory.ts delete <uuid>`                                                       |
 | "link these two"                     | `bun memory.ts link <uuid-a> <uuid-b> [--type supports]`                            |
+| "unlink these two"                   | `bun memory.ts unlink <uuid-a> <uuid-b> [--type supports]`                          |
 | "recent memories"                    | `bun memory.ts recent [--limit n] [--source s]`                                     |
 | "memories tagged X"                  | `bun memory.ts tag <tag>`                                                           |
 | "update this memory"                 | `bun memory.ts update <uuid> --content "new text"`                                  |
 | "delete expired"                     | `bun memory.ts cleanup`                                                             |
-| "how many memories"                  | `bun memory.ts stats`                                                               |
+| "how many memories"                  | `bun memory.ts stats [--profile p]`                                                 |
+| "check system health"               | `bun memory.ts health`                                                              |
+| "list profiles"                      | `bun memory.ts profiles`                                                            |
+| "export memories"                    | `bun memory.ts export [--profile p] [--output file.json]`                           |
+| "import memories"                    | `bun memory.ts import <file.json> [--re-embed]`                                     |
+| "re-embed all memories"             | `bun memory.ts re-embed [--profile p] [--batch-size n]`                             |
 | "set up memory", "create tables"     | Read `setup.md`, run `schema.sql`                                                   |
 | "which provider"                     | Read `providers.md`                                                                 |
 
@@ -83,8 +97,8 @@ Store these in `.env` or your shell profile. The skill reads them for all operat
 
 ```
 memories
-  id, content, embedding (vector), metadata (jsonb)
-  source, tags[], profile
+  id, content, original_content, embedding (vector), embedding_model
+  metadata (jsonb), source, tags[], profile
   confidence, access_count, compression_level
   created_at, updated_at, expires_at
 
@@ -109,6 +123,9 @@ bun $MEMORY store "We decided to use JWT for auth, not sessions" --tags decision
 # Search (hybrid semantic + keyword)
 bun $MEMORY search "authentication approach" --limit 5
 
+# Search with confidence filter
+bun $MEMORY search "auth" --min-confidence 0.8
+
 # Get a specific memory
 bun $MEMORY get <uuid>
 
@@ -118,13 +135,31 @@ bun $MEMORY recent --limit 10
 # Link two memories
 bun $MEMORY link <uuid-a> <uuid-b> --type supports --strength 0.9
 
+# Unlink two memories
+bun $MEMORY unlink <uuid-a> <uuid-b> --type supports
+
 # Graph traversal from a memory
 bun $MEMORY related <uuid> --depth 2
 
 # Stats overview
 bun $MEMORY stats
+
+# Health check (Supabase + embeddings + RPCs)
+bun $MEMORY health
+
+# List all profiles with counts
+bun $MEMORY profiles
+
+# Export memories (excluding embeddings)
+bun $MEMORY export --output backup.json
+
+# Import memories with re-embedding
+bun $MEMORY import backup.json --re-embed
+
+# Re-embed all memories with current provider
+bun $MEMORY re-embed --batch-size 50
 ```
 
 All commands output clean JSON. Embeddings are stripped from output — you never see the raw float arrays.
 
-For full operation patterns, read `operations.md`. For search parameters, read `search.md`.
+For full field reference, read `operations.md`. For search parameters, read `search.md`.

@@ -22,7 +22,9 @@ create extension if not exists vector with schema extensions;
 create table if not exists memories (
   id               uuid primary key default gen_random_uuid(),
   content          text not null,
+  original_content text,                       -- preserved before compression
   embedding        extensions.vector(1024),   -- change 1024 to your dim
+  embedding_model  text,                       -- which model generated this vector
   source           text,                       -- e.g. 'claude-code', 'cursor'
   profile          text default 'default',     -- namespace partition
   tags             text[] default '{}',
@@ -59,6 +61,7 @@ create index if not exists idx_memories_source    on memories(source);
 create index if not exists idx_memories_tags      on memories using gin(tags);
 create index if not exists idx_memories_expires   on memories(expires_at) where expires_at is not null;
 create index if not exists idx_memories_created   on memories(created_at desc);
+create index if not exists idx_memories_profile_created on memories(profile, created_at desc);
 
 -- ============================================================
 -- 3. Knowledge graph edges table
@@ -120,18 +123,6 @@ returns table (
   created_at  timestamptz
 )
 language sql stable as $$
-  update memories set access_count = access_count + 1
-  where id in (
-    select id from memories
-    where (expires_at is null or expires_at > now())
-      and (profile_filter is null or profile = profile_filter)
-      and (source_filter  is null or source  = source_filter)
-      and confidence >= min_confidence
-      and (1 - (embedding <=> query_embedding)) > match_threshold
-    order by embedding <=> query_embedding
-    limit match_count
-  );
-
   select
     id, content,
     1 - (embedding <=> query_embedding) as similarity,
@@ -311,4 +302,30 @@ begin
   get diagnostics deleted_count = row_count;
   return deleted_count;
 end;
+$$;
+
+-- ============================================================
+-- 10. RPC: bump_access_count (VOLATILE — separated from STABLE search)
+-- ============================================================
+create or replace function bump_access_count(memory_ids uuid[])
+returns void
+language plpgsql as $$
+begin
+  update memories set access_count = access_count + 1
+  where id = any(memory_ids);
+end;
+$$;
+
+-- ============================================================
+-- 11. RPC: memory_stats (aggregate stats without fetching rows)
+-- ============================================================
+create or replace function memory_stats(profile_filter text default null)
+returns json
+language sql stable as $$
+  select json_build_object(
+    'total', (select count(*) from memories where (profile_filter is null or profile = profile_filter) and (expires_at is null or expires_at > now())),
+    'by_source', (select coalesce(json_object_agg(s, cnt), '{}') from (select coalesce(source, 'unknown') as s, count(*) as cnt from memories where (profile_filter is null or profile = profile_filter) and (expires_at is null or expires_at > now()) group by source) t),
+    'by_profile', (select coalesce(json_object_agg(p, cnt), '{}') from (select coalesce(profile, 'default') as p, count(*) as cnt from memories where (expires_at is null or expires_at > now()) group by profile) t),
+    'expiring_in_7d', (select count(*) from memories where expires_at is not null and expires_at > now() and expires_at <= now() + interval '7 days' and (profile_filter is null or profile = profile_filter))
+  );
 $$;

@@ -6,8 +6,8 @@
  * Designed for LLM use: minimal output, clean JSON, one command per operation.
  *
  * Usage:
- *   bun memory.ts store "text" [--tags t1,t2] [--source s] [--profile p] [--ttl days]
- *   bun memory.ts search "query" [--limit n] [--threshold f] [--profile p] [--tag t] [--source s]
+ *   bun memory.ts store "text" [--tags t1,t2] [--source s] [--profile p] [--ttl days] [--metadata '{}']
+ *   bun memory.ts search "query" [--limit n] [--threshold f] [--profile p] [--tag t] [--source s] [--min-confidence f]
  *   bun memory.ts get <uuid>
  *   bun memory.ts recent [--limit n] [--source s] [--profile p]
  *   bun memory.ts tag <tag> [--limit n] [--profile p]
@@ -17,13 +17,22 @@
  *   bun memory.ts unlink <uuid-a> <uuid-b> [--type supports]
  *   bun memory.ts related <uuid> [--depth n] [--min-strength f]
  *   bun memory.ts cleanup
- *   bun memory.ts stats
+ *   bun memory.ts stats [--profile p]
+ *   bun memory.ts health
+ *   bun memory.ts profiles
+ *   bun memory.ts export [--profile p] [--output file.json]
+ *   bun memory.ts import <file.json> [--re-embed]
+ *   bun memory.ts re-embed [--profile p] [--batch-size n]
  *
  * Required env vars:
  *   SUPABASE_URL, SUPABASE_SERVICE_KEY
  *   EMBEDDING_PROVIDER (ollama|openai|cohere|voyage|gemini)
  *   EMBEDDING_MODEL, EMBEDDING_DIM
  *   + provider key (OPENAI_API_KEY etc.)
+ *
+ * Optional env vars:
+ *   MEMORY_SOURCE   — default source tag (default: "agent")
+ *   MEMORY_PROFILE  — default profile partition (default: "default")
  */
 
 // ── Env ──────────────────────────────────────────────────────────────────────
@@ -67,6 +76,48 @@ function fatal(msg: string, detail?: unknown): never {
   process.exit(1);
 }
 
+// ── Validation helpers ───────────────────────────────────────────────────────
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function validateUuid(value: string, label = "id"): string {
+  if (!UUID_RE.test(value)) fatal(`Invalid UUID for ${label}: ${value}`);
+  return value;
+}
+
+function validateRange(value: number, min: number, max: number, label: string): number {
+  if (isNaN(value) || value < min || value > max) {
+    fatal(`${label} must be between ${min} and ${max}, got: ${value}`);
+  }
+  return value;
+}
+
+function validatePositive(value: number, label: string): number {
+  if (isNaN(value) || value <= 0) {
+    fatal(`${label} must be > 0, got: ${value}`);
+  }
+  return value;
+}
+
+function validateNonNegative(value: number, label: string): number {
+  if (isNaN(value) || value < 0) {
+    fatal(`${label} must be >= 0, got: ${value}`);
+  }
+  return value;
+}
+
+function parseTags(raw: string): string[] {
+  return raw.split(",").map((t) => t.trim()).filter(Boolean);
+}
+
+function safeJsonParse(raw: string, label: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    fatal(`Invalid JSON for ${label}: ${(e as Error).message}`, raw);
+  }
+}
+
 // ── Arg parsing ──────────────────────────────────────────────────────────────
 
 function parseArgs(argv: string[]) {
@@ -96,11 +147,20 @@ function flag(flags: Record<string, string | boolean>, key: string): string | un
 
 // ── Supabase ──────────────────────────────────────────────────────────────────
 
+function sanitizeErrorText(text: string): string {
+  // Strip anything that looks like an API key or bearer token
+  return text
+    .replace(/Bearer\s+[A-Za-z0-9._\-]+/gi, "Bearer [REDACTED]")
+    .replace(/sk-[A-Za-z0-9]+/g, "sk-[REDACTED]")
+    .replace(/eyJ[A-Za-z0-9._\-]+/g, "[REDACTED_TOKEN]");
+}
+
 async function supa(
   method: string,
   path: string,
   body?: unknown,
-  query?: Record<string, string>
+  query?: Record<string, string>,
+  extraHeaders?: Record<string, string>
 ): Promise<unknown> {
   const base = required("SUPABASE_URL");
   const key = required("SUPABASE_SERVICE_KEY");
@@ -114,6 +174,7 @@ async function supa(
     Authorization: `Bearer ${key}`,
     "Content-Type": "application/json",
     Prefer: "return=representation",
+    ...extraHeaders,
   };
 
   const res = await fetch(url, {
@@ -124,7 +185,7 @@ async function supa(
 
   const text = await res.text();
   if (!res.ok) {
-    fatal(`Supabase ${method} ${path} → ${res.status}`, text);
+    fatal(`Supabase ${method} ${path} → ${res.status}`, sanitizeErrorText(text));
   }
   return text ? JSON.parse(text) : null;
 }
@@ -139,6 +200,8 @@ async function embed(text: string): Promise<number[]> {
   const provider = required("EMBEDDING_PROVIDER");
   const model = required("EMBEDDING_MODEL");
 
+  let embedding: number[];
+
   switch (provider) {
     case "ollama": {
       const base = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
@@ -147,9 +210,10 @@ async function embed(text: string): Promise<number[]> {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model, prompt: text }),
       });
-      if (!res.ok) fatal("Ollama embedding failed", await res.text());
+      if (!res.ok) fatal("Ollama embedding failed", sanitizeErrorText(await res.text()));
       const j = (await res.json()) as { embedding: number[] };
-      return j.embedding;
+      embedding = j.embedding;
+      break;
     }
 
     case "openai": {
@@ -165,9 +229,10 @@ async function embed(text: string): Promise<number[]> {
         },
         body: JSON.stringify(body),
       });
-      if (!res.ok) fatal("OpenAI embedding failed", await res.text());
+      if (!res.ok) fatal("OpenAI embedding failed", sanitizeErrorText(await res.text()));
       const j = (await res.json()) as { data: { embedding: number[] }[] };
-      return j.data[0].embedding;
+      embedding = j.data[0].embedding;
+      break;
     }
 
     case "cohere": {
@@ -185,9 +250,10 @@ async function embed(text: string): Promise<number[]> {
           embedding_types: ["float"],
         }),
       });
-      if (!res.ok) fatal("Cohere embedding failed", await res.text());
+      if (!res.ok) fatal("Cohere embedding failed", sanitizeErrorText(await res.text()));
       const j = (await res.json()) as { embeddings: { float: number[][] } };
-      return j.embeddings.float[0];
+      embedding = j.embeddings.float[0];
+      break;
     }
 
     case "voyage": {
@@ -200,9 +266,10 @@ async function embed(text: string): Promise<number[]> {
         },
         body: JSON.stringify({ model, input: [text], input_type: "document" }),
       });
-      if (!res.ok) fatal("Voyage embedding failed", await res.text());
+      if (!res.ok) fatal("Voyage embedding failed", sanitizeErrorText(await res.text()));
       const j = (await res.json()) as { data: { embedding: number[] }[] };
-      return j.data[0].embedding;
+      embedding = j.data[0].embedding;
+      break;
     }
 
     case "gemini": {
@@ -219,14 +286,23 @@ async function embed(text: string): Promise<number[]> {
           }),
         }
       );
-      if (!res.ok) fatal("Gemini embedding failed", await res.text());
+      if (!res.ok) fatal("Gemini embedding failed", sanitizeErrorText(await res.text()));
       const j = (await res.json()) as { embedding: { values: number[] } };
-      return j.embedding.values;
+      embedding = j.embedding.values;
+      break;
     }
 
     default:
       fatal(`Unknown EMBEDDING_PROVIDER: ${provider}. Use: ollama|openai|cohere|voyage|gemini`);
   }
+
+  // Validate embedding dimension matches config
+  const expectedDim = process.env.EMBEDDING_DIM ? parseInt(process.env.EMBEDDING_DIM) : null;
+  if (expectedDim && embedding.length !== expectedDim) {
+    fatal(`Embedding dimension mismatch: got ${embedding.length}, expected ${expectedDim} (EMBEDDING_DIM). Check your model/provider config.`);
+  }
+
+  return embedding;
 }
 
 async function embedForQuery(text: string): Promise<number[]> {
@@ -249,7 +325,7 @@ async function embedForQuery(text: string): Promise<number[]> {
         embedding_types: ["float"],
       }),
     });
-    if (!res.ok) fatal("Cohere query embedding failed", await res.text());
+    if (!res.ok) fatal("Cohere query embedding failed", sanitizeErrorText(await res.text()));
     const j = (await res.json()) as { embeddings: { float: number[][] } };
     return j.embeddings.float[0];
   }
@@ -264,7 +340,7 @@ async function embedForQuery(text: string): Promise<number[]> {
       },
       body: JSON.stringify({ model, input: [text], input_type: "query" }),
     });
-    if (!res.ok) fatal("Voyage query embedding failed", await res.text());
+    if (!res.ok) fatal("Voyage query embedding failed", sanitizeErrorText(await res.text()));
     const j = (await res.json()) as { data: { embedding: number[] }[] };
     return j.data[0].embedding;
   }
@@ -283,7 +359,7 @@ async function embedForQuery(text: string): Promise<number[]> {
         }),
       }
     );
-    if (!res.ok) fatal("Gemini query embedding failed", await res.text());
+    if (!res.ok) fatal("Gemini query embedding failed", sanitizeErrorText(await res.text()));
     const j = (await res.json()) as { embedding: { values: number[] } };
     return j.embedding.values;
   }
@@ -296,7 +372,7 @@ async function embedForQuery(text: string): Promise<number[]> {
 
 async function cmdStore(positional: string[], flags: Record<string, string | boolean>) {
   const content = positional[0];
-  if (!content) fatal("Usage: store <content> [--tags t1,t2] [--source s] [--profile p] [--ttl days]");
+  if (!content) fatal("Usage: store <content> [--tags t1,t2] [--source s] [--profile p] [--ttl days] [--metadata '{}']");
 
   const tagsRaw = flag(flags, "tags");
   const source = flag(flags, "source") ?? process.env.MEMORY_SOURCE ?? "agent";
@@ -311,13 +387,15 @@ async function cmdStore(positional: string[], flags: Record<string, string | boo
     embedding,
     source,
     profile,
-    tags: tagsRaw ? tagsRaw.split(",").map((t) => t.trim()) : [],
-    metadata: metaRaw ? JSON.parse(metaRaw) : {},
+    tags: tagsRaw ? parseTags(tagsRaw) : [],
+    metadata: metaRaw ? safeJsonParse(metaRaw, "--metadata") : {},
+    embedding_model: process.env.EMBEDDING_MODEL ?? null,
   };
 
   if (ttlDays) {
+    const days = validatePositive(parseInt(ttlDays), "--ttl");
     const exp = new Date();
-    exp.setDate(exp.getDate() + parseInt(ttlDays));
+    exp.setDate(exp.getDate() + days);
     row.expires_at = exp.toISOString();
   }
 
@@ -330,13 +408,15 @@ async function cmdStore(positional: string[], flags: Record<string, string | boo
 
 async function cmdSearch(positional: string[], flags: Record<string, string | boolean>) {
   const query = positional[0];
-  if (!query) fatal("Usage: search <query> [--limit n] [--threshold f] [--profile p] [--tag t] [--source s]");
+  if (!query) fatal("Usage: search <query> [--limit n] [--threshold f] [--profile p] [--tag t] [--source s] [--min-confidence f]");
 
-  const limit = parseInt(flag(flags, "limit") ?? "10");
-  const threshold = parseFloat(flag(flags, "threshold") ?? "0.3");
+  const limit = validatePositive(parseInt(flag(flags, "limit") ?? "10"), "--limit");
+  const threshold = validateRange(parseFloat(flag(flags, "threshold") ?? "0.3"), 0, 1, "--threshold");
   const profile = flag(flags, "profile") ?? undefined;
   const tag = flag(flags, "tag") ?? undefined;
   const source = flag(flags, "source") ?? undefined;
+  const minConfidenceRaw = flag(flags, "min-confidence");
+  const minConfidence = minConfidenceRaw ? validateRange(parseFloat(minConfidenceRaw), 0, 1, "--min-confidence") : undefined;
 
   const queryEmbedding = await embedForQuery(query);
 
@@ -348,7 +428,15 @@ async function cmdSearch(positional: string[], flags: Record<string, string | bo
     ...(profile && { profile_filter: profile }),
     ...(source && { source_filter: source }),
     ...(tag && { tag_filter: tag }),
+    ...(minConfidence !== undefined && { min_confidence: minConfidence }),
   });
+
+  // Bump access_count for returned results (separate VOLATILE call)
+  const rows = Array.isArray(results) ? results as Record<string, unknown>[] : [];
+  if (rows.length > 0) {
+    const ids = rows.map((r) => r.id as string);
+    rpc("bump_access_count", { memory_ids: ids }).catch(() => {});
+  }
 
   out(results);
 }
@@ -356,6 +444,7 @@ async function cmdSearch(positional: string[], flags: Record<string, string | bo
 async function cmdGet(positional: string[]) {
   const id = positional[0];
   if (!id) fatal("Usage: get <uuid>");
+  validateUuid(id);
 
   const result = await supa("GET", "/rest/v1/memories", undefined, { id: `eq.${id}` }) as unknown[];
   if (!Array.isArray(result) || result.length === 0) fatal("Memory not found", { id });
@@ -365,6 +454,7 @@ async function cmdGet(positional: string[]) {
 
 async function cmdRecent(flags: Record<string, string | boolean>) {
   const limit = flag(flags, "limit") ?? "20";
+  validatePositive(parseInt(limit), "--limit");
   const source = flag(flags, "source");
   const profile = flag(flags, "profile");
 
@@ -384,9 +474,11 @@ async function cmdTag(positional: string[], flags: Record<string, string | boole
   const tag = positional[0];
   if (!tag) fatal("Usage: tag <tag> [--limit n] [--profile p]");
 
+  const limit = validatePositive(parseInt(flag(flags, "limit") ?? "20"), "--limit");
+
   const result = await rpc("get_memories_by_tag", {
     tag,
-    limit_count: parseInt(flag(flags, "limit") ?? "20"),
+    limit_count: limit,
     ...(flag(flags, "profile") && { profile_filter: flag(flags, "profile") }),
   });
   out(result);
@@ -395,6 +487,7 @@ async function cmdTag(positional: string[], flags: Record<string, string | boole
 async function cmdUpdate(positional: string[], flags: Record<string, string | boolean>) {
   const id = positional[0];
   if (!id) fatal("Usage: update <uuid> [--content text] [--confidence f] [--tags t1,t2] [--metadata '{}']");
+  validateUuid(id);
 
   const patch: Record<string, unknown> = {};
 
@@ -402,16 +495,17 @@ async function cmdUpdate(positional: string[], flags: Record<string, string | bo
   if (content) {
     patch.content = content;
     patch.embedding = await embed(content); // re-embed when content changes
+    patch.embedding_model = process.env.EMBEDDING_MODEL ?? null;
   }
 
   const confidence = flag(flags, "confidence");
-  if (confidence) patch.confidence = parseFloat(confidence);
+  if (confidence) patch.confidence = validateRange(parseFloat(confidence), 0, 1, "--confidence");
 
   const tagsRaw = flag(flags, "tags");
-  if (tagsRaw) patch.tags = tagsRaw.split(",").map((t) => t.trim());
+  if (tagsRaw) patch.tags = parseTags(tagsRaw);
 
   const metaRaw = flag(flags, "metadata");
-  if (metaRaw) patch.metadata = JSON.parse(metaRaw);
+  if (metaRaw) patch.metadata = safeJsonParse(metaRaw, "--metadata");
 
   if (Object.keys(patch).length === 0) fatal("Provide at least one of: --content, --confidence, --tags, --metadata");
 
@@ -424,6 +518,7 @@ async function cmdUpdate(positional: string[], flags: Record<string, string | bo
 async function cmdDelete(positional: string[]) {
   const id = positional[0];
   if (!id) fatal("Usage: delete <uuid>");
+  validateUuid(id);
 
   await supa("DELETE", "/rest/v1/memories", undefined, { id: `eq.${id}` });
   out({ deleted: id });
@@ -432,9 +527,11 @@ async function cmdDelete(positional: string[]) {
 async function cmdLink(positional: string[], flags: Record<string, string | boolean>) {
   const [a, b] = positional;
   if (!a || !b) fatal("Usage: link <uuid-a> <uuid-b> [--type supports] [--strength 0.8]");
+  validateUuid(a, "uuid-a");
+  validateUuid(b, "uuid-b");
 
   const edgeType = flag(flags, "type") ?? "related";
-  const strength = parseFloat(flag(flags, "strength") ?? "0.7");
+  const strength = validateRange(parseFloat(flag(flags, "strength") ?? "0.7"), 0, 1, "--strength");
 
   const valid = ["supports", "contradicts", "expands", "related", "depends_on", "similar"];
   if (!valid.includes(edgeType)) fatal(`--type must be one of: ${valid.join(", ")}`);
@@ -452,6 +549,8 @@ async function cmdLink(positional: string[], flags: Record<string, string | bool
 async function cmdUnlink(positional: string[], flags: Record<string, string | boolean>) {
   const [a, b] = positional;
   if (!a || !b) fatal("Usage: unlink <uuid-a> <uuid-b> [--type <edge-type>]");
+  validateUuid(a, "uuid-a");
+  validateUuid(b, "uuid-b");
 
   const q: Record<string, string> = {
     source_id: `eq.${a}`,
@@ -467,11 +566,15 @@ async function cmdUnlink(positional: string[], flags: Record<string, string | bo
 async function cmdRelated(positional: string[], flags: Record<string, string | boolean>) {
   const id = positional[0];
   if (!id) fatal("Usage: related <uuid> [--depth n] [--min-strength f]");
+  validateUuid(id);
+
+  const depth = validateNonNegative(parseInt(flag(flags, "depth") ?? "2"), "--depth");
+  const minStrength = validateRange(parseFloat(flag(flags, "min-strength") ?? "0.5"), 0, 1, "--min-strength");
 
   const result = await rpc("find_related_memories", {
     start_memory_id: id,
-    max_depth: parseInt(flag(flags, "depth") ?? "2"),
-    min_strength: parseFloat(flag(flags, "min-strength") ?? "0.5"),
+    max_depth: depth,
+    min_strength: minStrength,
   });
   out(result);
 }
@@ -481,43 +584,211 @@ async function cmdCleanup() {
   out({ deleted_expired: result });
 }
 
-async function cmdStats() {
-  const [total, bySource, byProfile] = await Promise.all([
-    supa("GET", "/rest/v1/memories", undefined, {
-      select: "count",
-      head: "true",
-    }).catch(() => null),
-    supa("GET", "/rest/v1/memories", undefined, {
-      select: "source",
-      // PostgREST group-by via URL isn't straightforward; fetch distinct sources
-    }).catch(() => null),
-    supa("GET", "/rest/v1/memories", undefined, {
-      select: "id,source,profile,confidence,compression_level,expires_at",
-      limit: "1000",
-      order: "created_at.desc",
-    }),
-  ]);
+async function cmdStats(flags: Record<string, string | boolean>) {
+  const profile = flag(flags, "profile") ?? undefined;
+  const result = await rpc("memory_stats", {
+    ...(profile && { profile_filter: profile }),
+  });
+  out(result);
+}
 
-  const rows = Array.isArray(byProfile) ? (byProfile as Record<string, unknown>[]) : [];
-  const sources: Record<string, number> = {};
-  const profiles: Record<string, number> = {};
-  let expiring = 0;
-  const now = Date.now();
+async function cmdHealth() {
+  const checks: Record<string, unknown> = {};
 
-  for (const r of rows) {
-    const s = (r.source as string) ?? "unknown";
-    const p = (r.profile as string) ?? "default";
-    sources[s] = (sources[s] ?? 0) + 1;
-    profiles[p] = (profiles[p] ?? 0) + 1;
-    if (r.expires_at && new Date(r.expires_at as string).getTime() - now < 7 * 86400_000) expiring++;
+  // 1. Check Supabase connectivity
+  try {
+    await supa("GET", "/rest/v1/memories", undefined, { limit: "0", select: "id" });
+    checks.supabase = "ok";
+  } catch {
+    checks.supabase = "failed";
   }
 
-  out({
-    total_memories: rows.length,
-    by_source: sources,
-    by_profile: profiles,
-    expiring_in_7d: expiring,
-  });
+  // 2. Check RPC functions exist
+  try {
+    // Call hybrid_search with a zero-length vector to trigger param error (not "function not found")
+    await rpc("hybrid_search", {
+      query_text: "__health_check__",
+      query_embedding: Array(parseInt(process.env.EMBEDDING_DIM ?? "1024")).fill(0),
+      match_count: 1,
+      match_threshold: 0.99,
+    });
+    checks.rpc_hybrid_search = "ok";
+  } catch (e: unknown) {
+    const msg = (e as Error).message ?? String(e);
+    checks.rpc_hybrid_search = msg.includes("function") ? "missing" : "ok";
+  }
+
+  try {
+    await rpc("memory_stats", {});
+    checks.rpc_memory_stats = "ok";
+  } catch {
+    checks.rpc_memory_stats = "missing (run updated schema.sql)";
+  }
+
+  try {
+    await rpc("bump_access_count", { memory_ids: [] });
+    checks.rpc_bump_access_count = "ok";
+  } catch {
+    checks.rpc_bump_access_count = "missing (run updated schema.sql)";
+  }
+
+  // 3. Check embedding provider
+  try {
+    const vec = await embed("health check test");
+    checks.embedding_provider = "ok";
+    checks.embedding_dim = vec.length;
+    checks.embedding_model = process.env.EMBEDDING_MODEL;
+  } catch {
+    checks.embedding_provider = "failed";
+  }
+
+  // 4. Check dimension match
+  const expectedDim = process.env.EMBEDDING_DIM ? parseInt(process.env.EMBEDDING_DIM) : null;
+  if (expectedDim && typeof checks.embedding_dim === "number") {
+    checks.dim_match = checks.embedding_dim === expectedDim ? "ok" : `mismatch: got ${checks.embedding_dim}, expected ${expectedDim}`;
+  }
+
+  out(checks);
+}
+
+async function cmdProfiles() {
+  // Use a direct query with select+group approach via PostgREST
+  // PostgREST doesn't support GROUP BY directly, so use an RPC or fetch distinct
+  try {
+    const result = await rpc("memory_stats", {});
+    const stats = result as Record<string, unknown>;
+    out({ profiles: stats.by_profile });
+  } catch {
+    // Fallback: fetch distinct profiles manually
+    const rows = await supa("GET", "/rest/v1/memories", undefined, {
+      select: "profile",
+      order: "profile",
+    }) as Record<string, unknown>[];
+    const counts: Record<string, number> = {};
+    for (const r of rows) {
+      const p = (r.profile as string) ?? "default";
+      counts[p] = (counts[p] ?? 0) + 1;
+    }
+    out({ profiles: counts });
+  }
+}
+
+async function cmdExport(flags: Record<string, string | boolean>) {
+  const profile = flag(flags, "profile");
+  const outputFile = flag(flags, "output");
+
+  const q: Record<string, string> = {
+    select: "id,content,original_content,source,profile,tags,metadata,confidence,access_count,compression_level,embedding_model,created_at,updated_at,expires_at",
+    order: "created_at.asc",
+    limit: "10000",
+  };
+  if (profile) q.profile = `eq.${profile}`;
+
+  const rows = await supa("GET", "/rest/v1/memories", undefined, q);
+  const data = {
+    exported_at: new Date().toISOString(),
+    profile_filter: profile ?? null,
+    count: Array.isArray(rows) ? rows.length : 0,
+    memories: rows,
+  };
+
+  if (outputFile) {
+    await Bun.write(outputFile, JSON.stringify(data, null, 2));
+    out({ exported: outputFile, count: data.count });
+  } else {
+    out(data);
+  }
+}
+
+async function cmdImport(positional: string[], flags: Record<string, string | boolean>) {
+  const filePath = positional[0];
+  if (!filePath) fatal("Usage: import <file.json> [--re-embed]");
+
+  const reEmbed = flags["re-embed"] === true;
+
+  const file = Bun.file(filePath);
+  if (!(await file.exists())) fatal(`File not found: ${filePath}`);
+
+  const data = safeJsonParse(await file.text(), filePath) as Record<string, unknown>;
+  const memories = (data.memories ?? data) as Record<string, unknown>[];
+
+  if (!Array.isArray(memories)) fatal("Expected 'memories' array in import file");
+
+  let imported = 0;
+  let errors = 0;
+
+  for (const mem of memories) {
+    try {
+      const row: Record<string, unknown> = {
+        content: mem.content,
+        source: mem.source ?? "import",
+        profile: mem.profile ?? "default",
+        tags: mem.tags ?? [],
+        metadata: mem.metadata ?? {},
+        confidence: mem.confidence ?? 0.8,
+        compression_level: mem.compression_level ?? 0,
+        original_content: mem.original_content ?? null,
+        embedding_model: reEmbed ? (process.env.EMBEDDING_MODEL ?? null) : (mem.embedding_model ?? null),
+      };
+
+      if (reEmbed) {
+        row.embedding = await embed(mem.content as string);
+      }
+
+      if (mem.expires_at) row.expires_at = mem.expires_at;
+
+      await supa("POST", "/rest/v1/memories", row);
+      imported++;
+    } catch {
+      errors++;
+    }
+  }
+
+  out({ imported, errors, total: memories.length });
+}
+
+async function cmdReEmbed(flags: Record<string, string | boolean>) {
+  const profile = flag(flags, "profile");
+  const batchSize = validatePositive(parseInt(flag(flags, "batch-size") ?? "50"), "--batch-size");
+
+  const q: Record<string, string> = {
+    select: "id,content",
+    order: "created_at.asc",
+    limit: String(batchSize),
+  };
+  if (profile) q.profile = `eq.${profile}`;
+
+  let processed = 0;
+  let errors = 0;
+  let offset = 0;
+
+  while (true) {
+    const pageQ = { ...q, offset: String(offset) };
+    const rows = await supa("GET", "/rest/v1/memories", undefined, pageQ) as Record<string, unknown>[];
+
+    if (!Array.isArray(rows) || rows.length === 0) break;
+
+    for (const row of rows) {
+      try {
+        const newEmbedding = await embed(row.content as string);
+        await supa("PATCH", "/rest/v1/memories", {
+          embedding: newEmbedding,
+          embedding_model: process.env.EMBEDDING_MODEL ?? null,
+        }, { id: `eq.${row.id}` });
+        processed++;
+        if (processed % 10 === 0) {
+          console.error(`re-embed progress: ${processed} done`);
+        }
+      } catch {
+        errors++;
+      }
+    }
+
+    offset += rows.length;
+    if (rows.length < batchSize) break;
+  }
+
+  out({ re_embedded: processed, errors, model: process.env.EMBEDDING_MODEL });
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -529,37 +800,51 @@ if (args.length === 0) {
   console.log(`usage: bun memory.ts <command> [args]
 
 commands:
-  store   <content> [--tags t1,t2] [--source s] [--profile p] [--ttl days]
-  search  <query>   [--limit n] [--threshold f] [--profile p] [--tag t] [--source s]
-  get     <uuid>
-  recent  [--limit n] [--source s] [--profile p]
-  tag     <tag>     [--limit n] [--profile p]
-  update  <uuid>    [--content text] [--confidence f] [--tags t1,t2] [--metadata '{}']
-  delete  <uuid>
-  link    <uuid-a> <uuid-b> [--type supports|contradicts|expands|related|depends_on|similar] [--strength f]
-  unlink  <uuid-a> <uuid-b> [--type edge-type]
-  related <uuid>    [--depth n] [--min-strength f]
+  store    <content> [--tags t1,t2] [--source s] [--profile p] [--ttl days] [--metadata '{}']
+  search   <query>   [--limit n] [--threshold f] [--profile p] [--tag t] [--source s] [--min-confidence f]
+  get      <uuid>
+  recent   [--limit n] [--source s] [--profile p]
+  tag      <tag>     [--limit n] [--profile p]
+  update   <uuid>    [--content text] [--confidence f] [--tags t1,t2] [--metadata '{}']
+  delete   <uuid>
+  link     <uuid-a> <uuid-b> [--type supports|contradicts|expands|related|depends_on|similar] [--strength f]
+  unlink   <uuid-a> <uuid-b> [--type edge-type]
+  related  <uuid>    [--depth n] [--min-strength f]
   cleanup
-  stats`);
+  stats    [--profile p]
+  health
+  profiles
+  export   [--profile p] [--output file.json]
+  import   <file.json> [--re-embed]
+  re-embed [--profile p] [--batch-size n]
+
+env defaults:
+  MEMORY_SOURCE   default source tag (default: "agent")
+  MEMORY_PROFILE  default profile (default: "default")`);
   process.exit(0);
 }
 
-const { positional, flags } = parseArgs(args);
+const { positional, flags: cliFlags } = parseArgs(args);
 const cmd = positional[0];
 const rest = positional.slice(1);
 
 switch (cmd) {
-  case "store":   await cmdStore(rest, flags); break;
-  case "search":  await cmdSearch(rest, flags); break;
-  case "get":     await cmdGet(rest); break;
-  case "recent":  await cmdRecent(flags); break;
-  case "tag":     await cmdTag(rest, flags); break;
-  case "update":  await cmdUpdate(rest, flags); break;
-  case "delete":  await cmdDelete(rest); break;
-  case "link":    await cmdLink(rest, flags); break;
-  case "unlink":  await cmdUnlink(rest, flags); break;
-  case "related": await cmdRelated(rest, flags); break;
-  case "cleanup": await cmdCleanup(); break;
-  case "stats":   await cmdStats(); break;
-  default:        fatal(`Unknown command: ${cmd}`);
+  case "store":    await cmdStore(rest, cliFlags); break;
+  case "search":   await cmdSearch(rest, cliFlags); break;
+  case "get":      await cmdGet(rest); break;
+  case "recent":   await cmdRecent(cliFlags); break;
+  case "tag":      await cmdTag(rest, cliFlags); break;
+  case "update":   await cmdUpdate(rest, cliFlags); break;
+  case "delete":   await cmdDelete(rest); break;
+  case "link":     await cmdLink(rest, cliFlags); break;
+  case "unlink":   await cmdUnlink(rest, cliFlags); break;
+  case "related":  await cmdRelated(rest, cliFlags); break;
+  case "cleanup":  await cmdCleanup(); break;
+  case "stats":    await cmdStats(cliFlags); break;
+  case "health":   await cmdHealth(); break;
+  case "profiles": await cmdProfiles(); break;
+  case "export":   await cmdExport(cliFlags); break;
+  case "import":   await cmdImport(rest, cliFlags); break;
+  case "re-embed": await cmdReEmbed(cliFlags); break;
+  default:         fatal(`Unknown command: ${cmd}`);
 }
