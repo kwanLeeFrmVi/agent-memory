@@ -1,14 +1,14 @@
 -- Agent Memory Schema
 -- Paste this entire file into Supabase SQL Editor and run it.
 --
--- IMPORTANT: Change 1024 to match your embedding model's dimension:
---   Ollama mxbai-embed-large  → 1024
---   Ollama nomic-embed-text   → 1024
+-- IMPORTANT: Change 768 to match your embedding model's dimension:
+--   Ollama mxbai-embed-large  → 768
+--   Ollama nomic-embed-text   → 768
 --   OpenAI text-embedding-3-small → 1536
 --   OpenAI text-embedding-3-large → 3072
---   Cohere embed-english-v3.0     → 1024
+--   Cohere embed-english-v3.0     → 768
 --   Voyage voyage-code-2          → 1536
---   Voyage voyage-3               → 1024
+--   Voyage voyage-3               → 768
 --   Google gemini-embedding-001   → 768
 
 -- ============================================================
@@ -23,7 +23,7 @@ create table if not exists memories (
   id               uuid primary key default gen_random_uuid(),
   content          text not null,
   original_content text,                       -- preserved before compression
-  embedding        extensions.vector(1024),   -- change 1024 to your dim
+  embedding        extensions.vector(768),   -- change 768 to your dim
   embedding_model  text,                       -- which model generated this vector
   source           text,                       -- e.g. 'claude-code', 'cursor'
   profile          text default 'default',     -- namespace partition
@@ -104,13 +104,17 @@ create trigger memories_updated_at
 -- ============================================================
 -- 5. RPC: match_memories (pure semantic search)
 -- ============================================================
+drop function if exists match_memories(extensions.vector, float, int, text, text, float);
+drop function if exists match_memories(extensions.vector, float, int, text[], text, text);
 create or replace function match_memories(
   query_embedding   extensions.vector,
   match_threshold   float    default 0.3,
   match_count       int      default 10,
   profile_filter    text     default null,
   source_filter     text     default null,
-  min_confidence    float    default 0
+  min_confidence    float    default 0,
+  after_date        timestamptz default null,
+  before_date       timestamptz default null
 )
 returns table (
   id          uuid,
@@ -132,6 +136,8 @@ language sql stable as $$
     and (profile_filter is null or profile = profile_filter)
     and (source_filter  is null or source  = source_filter)
     and confidence >= min_confidence
+    and (after_date is null or created_at >= after_date)
+    and (before_date is null or created_at <= before_date)
     and (1 - (embedding <=> query_embedding)) > match_threshold
   order by embedding <=> query_embedding
   limit match_count;
@@ -140,6 +146,7 @@ $$;
 -- ============================================================
 -- 6. RPC: hybrid_search (semantic + keyword, RRF ranked)
 -- ============================================================
+drop function if exists hybrid_search(text, extensions.vector, int, float, int, text, text, text, float);
 create or replace function hybrid_search(
   query_text        text,
   query_embedding   extensions.vector,
@@ -149,7 +156,9 @@ create or replace function hybrid_search(
   profile_filter    text     default null,
   source_filter     text     default null,
   tag_filter        text     default null,
-  min_confidence    float    default 0
+  min_confidence    float    default 0,
+  after_date        timestamptz default null,
+  before_date       timestamptz default null
 )
 returns table (
   id             uuid,
@@ -171,6 +180,8 @@ language sql stable as $$
       and (source_filter  is null or source  = source_filter)
       and (tag_filter     is null or tag_filter = any(tags))
       and confidence >= min_confidence
+      and (after_date is null or created_at >= after_date)
+      and (before_date is null or created_at <= before_date)
   ),
   semantic as (
     select id,

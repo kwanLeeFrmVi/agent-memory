@@ -26,10 +26,10 @@
  *
  * Env vars (AM_ prefix takes priority, falls back to unprefixed):
  *   AM_SUPABASE_URL / SUPABASE_URL
- *   AM_SUPABASE_SERVICE_KEY / SUPABASE_SERVICE_KEY
+ *   AM_SUPABASE_SERVICE_KEY / SUPABASE_SERVICE_KEY. (sb_secret_xxx)
  *   AM_EMBEDDING_PROVIDER / EMBEDDING_PROVIDER  (ollama|openai|cohere|voyage|gemini)
  *   AM_EMBEDDING_MODEL / EMBEDDING_MODEL
- *   AM_EMBEDDING_DIM / EMBEDDING_DIM
+ *   AM_EMBEDDING_DIM / EMBEDDING_DIM            (default: 1024)
  *   AM_OPENAI_API_KEY / OPENAI_API_KEY           (if using OpenAI)
  *   AM_COHERE_API_KEY / COHERE_API_KEY           (if using Cohere)
  *   AM_VOYAGE_API_KEY / VOYAGE_API_KEY           (if using Voyage)
@@ -84,6 +84,10 @@ function envSource(): string {
 
 function envProfile(): string {
   return process.env.AM_PROFILE ?? process.env.MEMORY_PROFILE ?? "default";
+}
+
+function envEmbeddingDim(): number {
+  return parseInt(process.env.AM_EMBEDDING_DIM ?? process.env.EMBEDDING_DIM ?? "1024");
 }
 
 // ── Output ───────────────────────────────────────────────────────────────────
@@ -182,18 +186,27 @@ async function supa(
   method: string,
   path: string,
   body?: unknown,
-  query?: Record<string, string>,
+  query?: Record<string, string> | [string, string][],
   extraHeaders?: Record<string, string>
 ): Promise<unknown> {
   const base = required("SUPABASE_URL");
   const key = required("SUPABASE_SERVICE_KEY");
 
   let url = `${base}${path}`;
-  if (query && Object.keys(query).length > 0) {
-    url += "?" + new URLSearchParams(query).toString();
+  if (query) {
+    if (Array.isArray(query)) {
+      if (query.length > 0) {
+        const params = new URLSearchParams();
+        for (const [k, v] of query) params.append(k, v);
+        url += "?" + params.toString();
+      }
+    } else if (Object.keys(query).length > 0) {
+      url += "?" + new URLSearchParams(query).toString();
+    }
   }
 
   const headers: Record<string, string> = {
+    apikey: key,
     Authorization: `Bearer ${key}`,
     "Content-Type": "application/json",
     Prefer: "return=representation",
@@ -241,9 +254,8 @@ async function embed(text: string): Promise<number[]> {
 
     case "openai": {
       const key = required("OPENAI_API_KEY"); // AM_OPENAI_API_KEY || OPENAI_API_KEY
-      const dim = env("EMBEDDING_DIM") ? parseInt(env("EMBEDDING_DIM")!) : undefined;
-      const body: Record<string, unknown> = { model, input: text };
-      if (dim) body.dimensions = dim;
+      const dim = envEmbeddingDim();
+      const body: Record<string, unknown> = { model, input: text, dimensions: dim };
       const res = await fetch("https://api.openai.com/v1/embeddings", {
         method: "POST",
         headers: {
@@ -320,9 +332,9 @@ async function embed(text: string): Promise<number[]> {
   }
 
   // Validate embedding dimension matches config
-  const expectedDim = env("EMBEDDING_DIM") ? parseInt(env("EMBEDDING_DIM")!) : null;
-  if (expectedDim && embedding.length !== expectedDim) {
-    fatal(`Embedding dimension mismatch: got ${embedding.length}, expected ${expectedDim} (EMBEDDING_DIM). Check your model/provider config.`);
+  const expectedDim = envEmbeddingDim();
+  if (embedding.length !== expectedDim) {
+    fatal(`Embedding dimension mismatch: got ${embedding.length}, expected ${expectedDim} (AM_EMBEDDING_DIM). Check your model/provider config.`);
   }
 
   return embedding;
@@ -395,15 +407,33 @@ async function embedForQuery(text: string): Promise<number[]> {
 
 async function cmdStore(positional: string[], flags: Record<string, string | boolean>) {
   const content = positional[0];
-  if (!content) fatal("Usage: store <content> [--tags t1,t2] [--source s] [--profile p] [--ttl days] [--metadata '{}']");
+  if (!content) fatal("Usage: store <content> [--tags t1,t2] [--source s] [--profile p] [--ttl days] [--metadata '{}'] [--dedup threshold] [--auto-link]");
 
   const tagsRaw = flag(flags, "tags");
   const source = flag(flags, "source") ?? envSource();
   const profile = flag(flags, "profile") ?? envProfile();
   const ttlDays = flag(flags, "ttl");
   const metaRaw = flag(flags, "metadata");
+  const dedupRaw = flags["dedup"];
+  const dedupThreshold = dedupRaw === true ? 0.95 : (typeof dedupRaw === "string" ? validateRange(parseFloat(dedupRaw), 0, 1, "--dedup") : null);
+  const autoLink = flags["auto-link"] === true;
 
   const embedding = await embed(content);
+
+  // Dedup check: search for similar memories before storing
+  if (dedupThreshold !== null) {
+    const dupes = await rpc("match_memories", {
+      query_embedding: embedding,
+      match_threshold: dedupThreshold,
+      match_count: 1,
+      ...(profile && { profile_filter: profile }),
+    }) as Record<string, unknown>[];
+
+    if (Array.isArray(dupes) && dupes.length > 0) {
+      out({ skipped: true, reason: "duplicate_found", similarity: dupes[0].similarity, existing: dupes[0] });
+      return;
+    }
+  }
 
   const row: Record<string, unknown> = {
     content,
@@ -426,12 +456,41 @@ async function cmdStore(positional: string[], flags: Record<string, string | boo
   const saved = Array.isArray(result) ? result[0] : result;
   // Return only the essentials — embedding is huge and useless to the LLM
   const { embedding: _e, search_vector: _s, ...clean } = saved as Record<string, unknown>;
+
+  // Auto-link: find similar memories and create edges
+  if (autoLink && clean.id) {
+    const similar = await rpc("match_memories", {
+      query_embedding: embedding,
+      match_threshold: 0.5,
+      match_count: 5,
+      ...(profile && { profile_filter: profile }),
+    }) as Record<string, unknown>[];
+
+    const links: string[] = [];
+    if (Array.isArray(similar)) {
+      for (const s of similar) {
+        if (s.id !== clean.id) {
+          try {
+            await supa("POST", "/rest/v1/memory_edges", {
+              source_id: clean.id,
+              target_id: s.id,
+              edge_type: "similar",
+              strength: Math.min((s.similarity as number), 1),
+            });
+            links.push(s.id as string);
+          } catch { /* edge may already exist */ }
+        }
+      }
+    }
+    if (links.length > 0) (clean as Record<string, unknown>).auto_linked = links;
+  }
+
   out(clean);
 }
 
 async function cmdSearch(positional: string[], flags: Record<string, string | boolean>) {
   const query = positional[0];
-  if (!query) fatal("Usage: search <query> [--limit n] [--threshold f] [--profile p] [--tag t] [--source s] [--min-confidence f]");
+  if (!query) fatal("Usage: search <query> [--limit n] [--threshold f] [--profile p] [--tag t] [--source s] [--min-confidence f] [--after date] [--before date]");
 
   const limit = validatePositive(parseInt(flag(flags, "limit") ?? "10"), "--limit");
   const threshold = validateRange(parseFloat(flag(flags, "threshold") ?? "0.3"), 0, 1, "--threshold");
@@ -440,6 +499,8 @@ async function cmdSearch(positional: string[], flags: Record<string, string | bo
   const source = flag(flags, "source") ?? undefined;
   const minConfidenceRaw = flag(flags, "min-confidence");
   const minConfidence = minConfidenceRaw ? validateRange(parseFloat(minConfidenceRaw), 0, 1, "--min-confidence") : undefined;
+  const afterDate = flag(flags, "after") ?? undefined;
+  const beforeDate = flag(flags, "before") ?? undefined;
 
   const queryEmbedding = await embedForQuery(query);
 
@@ -452,6 +513,8 @@ async function cmdSearch(positional: string[], flags: Record<string, string | bo
     ...(source && { source_filter: source }),
     ...(tag && { tag_filter: tag }),
     ...(minConfidence !== undefined && { min_confidence: minConfidence }),
+    ...(afterDate && { after_date: afterDate }),
+    ...(beforeDate && { before_date: beforeDate }),
   });
 
   // Bump access_count for returned results (separate VOLATILE call)
@@ -480,16 +543,20 @@ async function cmdRecent(flags: Record<string, string | boolean>) {
   validatePositive(parseInt(limit), "--limit");
   const source = flag(flags, "source");
   const profile = flag(flags, "profile");
+  const afterDate = flag(flags, "after");
+  const beforeDate = flag(flags, "before");
 
-  const q: Record<string, string> = {
-    order: "created_at.desc",
-    limit,
-    select: "id,content,source,profile,tags,metadata,confidence,access_count,created_at,expires_at",
-  };
-  if (source) q.source = `eq.${source}`;
-  if (profile) q.profile = `eq.${profile}`;
+  const pairs: [string, string][] = [
+    ["order", "created_at.desc"],
+    ["limit", limit],
+    ["select", "id,content,source,profile,tags,metadata,confidence,access_count,created_at,expires_at"],
+  ];
+  if (source) pairs.push(["source", `eq.${source}`]);
+  if (profile) pairs.push(["profile", `eq.${profile}`]);
+  if (afterDate) pairs.push(["created_at", `gte.${afterDate}`]);
+  if (beforeDate) pairs.push(["created_at", `lte.${beforeDate}`]);
 
-  const results = await supa("GET", "/rest/v1/memories", undefined, q);
+  const results = await supa("GET", "/rest/v1/memories", undefined, pairs);
   out(results);
 }
 
@@ -631,7 +698,7 @@ async function cmdHealth() {
     // Call hybrid_search with a zero-length vector to trigger param error (not "function not found")
     await rpc("hybrid_search", {
       query_text: "__health_check__",
-      query_embedding: Array(parseInt(env("EMBEDDING_DIM") ?? "1024")).fill(0),
+      query_embedding: Array(envEmbeddingDim()).fill(0),
       match_count: 1,
       match_threshold: 0.99,
     });
@@ -666,8 +733,8 @@ async function cmdHealth() {
   }
 
   // 4. Check dimension match
-  const expectedDim = env("EMBEDDING_DIM") ? parseInt(env("EMBEDDING_DIM")!) : null;
-  if (expectedDim && typeof checks.embedding_dim === "number") {
+  const expectedDim = envEmbeddingDim();
+  if (typeof checks.embedding_dim === "number") {
     checks.dim_match = checks.embedding_dim === expectedDim ? "ok" : `mismatch: got ${checks.embedding_dim}, expected ${expectedDim}`;
   }
 
@@ -814,6 +881,312 @@ async function cmdReEmbed(flags: Record<string, string | boolean>) {
   out({ re_embedded: processed, errors, model: env("EMBEDDING_MODEL") });
 }
 
+// ── New Commands ─────────────────────────────────────────────────────────────
+
+async function cmdCompress(positional: string[], flags: Record<string, string | boolean>) {
+  const id = positional[0];
+  const compressed = positional[1];
+  if (!id || !compressed) fatal("Usage: compress <uuid> <compressed-text>");
+  validateUuid(id);
+
+  const result = await supa("GET", "/rest/v1/memories", undefined, { id: `eq.${id}` }) as Record<string, unknown>[];
+  if (!Array.isArray(result) || result.length === 0) fatal("Memory not found", { id });
+  const current = result[0];
+
+  const patch: Record<string, unknown> = {
+    content: compressed,
+    embedding: await embed(compressed),
+    embedding_model: env("EMBEDDING_MODEL") ?? null,
+    compression_level: Math.min(((current.compression_level as number) ?? 0) + 1, 2),
+  };
+
+  if (!current.original_content) {
+    patch.original_content = current.content;
+  }
+
+  const updated = await supa("PATCH", "/rest/v1/memories", patch, { id: `eq.${id}` }) as unknown[];
+  const saved = Array.isArray(updated) ? updated[0] : updated;
+  const { embedding: _e, search_vector: _s, ...clean } = (saved ?? { id }) as Record<string, unknown>;
+  out(clean);
+}
+
+async function cmdBulkDelete(flags: Record<string, string | boolean>) {
+  const tag = flag(flags, "tag");
+  const source = flag(flags, "source");
+  const profile = flag(flags, "profile");
+  const before = flag(flags, "before");
+  const after = flag(flags, "after");
+  const dryRun = flags["dry-run"] === true;
+
+  if (!tag && !source && !profile && !before && !after) {
+    fatal("Usage: bulk-delete [--tag t] [--source s] [--profile p] [--before date] [--after date] [--dry-run]");
+  }
+
+  const pairs: [string, string][] = [];
+  if (tag) pairs.push(["tags", `cs.{${tag}}`]);
+  if (source) pairs.push(["source", `eq.${source}`]);
+  if (profile) pairs.push(["profile", `eq.${profile}`]);
+  if (before) pairs.push(["created_at", `lt.${before}`]);
+  if (after) pairs.push(["created_at", `gt.${after}`]);
+
+  // Count matching memories first
+  const countPairs: [string, string][] = [["select", "id"], ...pairs];
+  const matches = await supa("GET", "/rest/v1/memories", undefined, countPairs) as unknown[];
+  const count = Array.isArray(matches) ? matches.length : 0;
+
+  if (dryRun) {
+    out({ dry_run: true, would_delete: count });
+    return;
+  }
+
+  if (count === 0) {
+    out({ deleted: 0 });
+    return;
+  }
+
+  await supa("DELETE", "/rest/v1/memories", undefined, pairs);
+  out({ deleted: count });
+}
+
+async function cmdContext(positional: string[], flags: Record<string, string | boolean>) {
+  const query = positional[0];
+  if (!query) fatal("Usage: context <query> [--limit n] [--depth d] [--profile p]");
+
+  const limit = validatePositive(parseInt(flag(flags, "limit") ?? "5"), "--limit");
+  const depth = validateNonNegative(parseInt(flag(flags, "depth") ?? "2"), "--depth");
+  const profile = flag(flags, "profile") ?? undefined;
+
+  const queryEmbedding = await embedForQuery(query);
+  const searchResults = await rpc("hybrid_search", {
+    query_text: query,
+    query_embedding: queryEmbedding,
+    match_count: limit,
+    match_threshold: 0.3,
+    ...(profile && { profile_filter: profile }),
+  }) as Record<string, unknown>[];
+
+  if (!Array.isArray(searchResults) || searchResults.length === 0) {
+    out({ query, memories: [], related: [] });
+    return;
+  }
+
+  // Bump access counts
+  const ids = searchResults.map((r) => r.id as string);
+  rpc("bump_access_count", { memory_ids: ids }).catch(() => {});
+
+  // Follow graph edges for each result
+  const seen = new Set<string>(ids);
+  const related: Record<string, unknown>[] = [];
+
+  if (depth > 0) {
+    for (const mem of searchResults) {
+      try {
+        const edges = await rpc("find_related_memories", {
+          start_memory_id: mem.id,
+          max_depth: depth,
+          min_strength: 0.5,
+        }) as Record<string, unknown>[];
+
+        if (Array.isArray(edges)) {
+          for (const edge of edges) {
+            const mid = edge.memory_id as string;
+            if (!seen.has(mid)) {
+              seen.add(mid);
+              related.push(edge);
+            }
+          }
+        }
+      } catch { /* ignore graph errors */ }
+    }
+  }
+
+  out({
+    query,
+    memories: searchResults,
+    ...(related.length > 0 && { related }),
+  });
+}
+
+async function cmdStoreBatch(positional: string[], flags: Record<string, string | boolean>) {
+  const filePath = positional[0];
+  if (!filePath) fatal("Usage: store-batch <file.json> [--dedup threshold] [--auto-link] [--profile p] [--source s]");
+
+  const file = Bun.file(filePath);
+  if (!(await file.exists())) fatal(`File not found: ${filePath}`);
+
+  const data = safeJsonParse(await file.text(), filePath) as unknown;
+  const items = (Array.isArray(data) ? data : (data as Record<string, unknown>).memories ?? data) as Record<string, unknown>[];
+  if (!Array.isArray(items)) fatal("Expected JSON array or {memories: [...]}");
+
+  const dedupRaw = flags["dedup"];
+  const dedupThreshold = dedupRaw === true ? 0.95 : (typeof dedupRaw === "string" ? parseFloat(dedupRaw) : null);
+  const autoLink = flags["auto-link"] === true;
+  const defaultSource = flag(flags, "source") ?? envSource();
+  const defaultProfile = flag(flags, "profile") ?? envProfile();
+
+  let stored = 0;
+  let skipped = 0;
+  let errors = 0;
+
+  for (const item of items) {
+    try {
+      const content = item.content as string;
+      if (!content) { errors++; continue; }
+
+      const embedding = await embed(content);
+
+      if (dedupThreshold !== null) {
+        const dupes = await rpc("match_memories", {
+          query_embedding: embedding,
+          match_threshold: dedupThreshold,
+          match_count: 1,
+        }) as Record<string, unknown>[];
+        if (Array.isArray(dupes) && dupes.length > 0) {
+          skipped++;
+          continue;
+        }
+      }
+
+      const row: Record<string, unknown> = {
+        content,
+        embedding,
+        source: (item.source as string) ?? defaultSource,
+        profile: (item.profile as string) ?? defaultProfile,
+        tags: Array.isArray(item.tags) ? item.tags : [],
+        metadata: item.metadata ?? {},
+        embedding_model: env("EMBEDDING_MODEL") ?? null,
+      };
+
+      const result = await supa("POST", "/rest/v1/memories", row) as unknown[];
+      const saved = Array.isArray(result) ? result[0] : result;
+
+      if (autoLink && saved) {
+        const sid = (saved as Record<string, unknown>).id;
+        const similar = await rpc("match_memories", {
+          query_embedding: embedding,
+          match_threshold: 0.5,
+          match_count: 3,
+        }) as Record<string, unknown>[];
+        if (Array.isArray(similar)) {
+          for (const s of similar) {
+            if (s.id !== sid) {
+              try {
+                await supa("POST", "/rest/v1/memory_edges", {
+                  source_id: sid,
+                  target_id: s.id,
+                  edge_type: "similar",
+                  strength: Math.min((s.similarity as number), 1),
+                });
+              } catch { /* edge may exist */ }
+            }
+          }
+        }
+      }
+
+      stored++;
+    } catch {
+      errors++;
+    }
+  }
+
+  out({ stored, skipped, errors, total: items.length });
+}
+
+async function cmdMerge(positional: string[], flags: Record<string, string | boolean>) {
+  if (positional.length < 2) fatal("Usage: merge <uuid1> <uuid2> [uuid3...] [--delete-originals] [--separator text]");
+
+  const ids = positional.map((id) => validateUuid(id));
+  const deleteOriginals = flags["delete-originals"] === true;
+  const separator = flag(flags, "separator") ?? "\n---\n";
+
+  const memories: Record<string, unknown>[] = [];
+  for (const id of ids) {
+    const result = await supa("GET", "/rest/v1/memories", undefined, { id: `eq.${id}` }) as Record<string, unknown>[];
+    if (!Array.isArray(result) || result.length === 0) fatal(`Memory not found: ${id}`);
+    memories.push(result[0]);
+  }
+
+  const mergedContent = memories.map((m) => m.content as string).join(separator);
+  const mergedTags = [...new Set(memories.flatMap((m) => (m.tags as string[]) ?? []))];
+  const mergedMeta: Record<string, unknown> = {};
+  for (const m of memories) {
+    Object.assign(mergedMeta, (m.metadata as Record<string, unknown>) ?? {});
+  }
+  mergedMeta.merged_from = ids;
+
+  const embedding = await embed(mergedContent);
+  const row: Record<string, unknown> = {
+    content: mergedContent,
+    embedding,
+    source: (memories[0].source as string) ?? envSource(),
+    profile: (memories[0].profile as string) ?? envProfile(),
+    tags: mergedTags,
+    metadata: mergedMeta,
+    embedding_model: env("EMBEDDING_MODEL") ?? null,
+  };
+
+  const result = await supa("POST", "/rest/v1/memories", row) as unknown[];
+  const saved = Array.isArray(result) ? result[0] : result;
+  const newId = (saved as Record<string, unknown>).id;
+
+  if (deleteOriginals) {
+    for (const id of ids) {
+      await supa("DELETE", "/rest/v1/memories", undefined, { id: `eq.${id}` });
+    }
+  } else {
+    for (const id of ids) {
+      try {
+        await supa("POST", "/rest/v1/memory_edges", {
+          source_id: newId,
+          target_id: id,
+          edge_type: "expands",
+          strength: 1.0,
+        });
+      } catch { /* edge may exist */ }
+    }
+  }
+
+  const { embedding: _e, search_vector: _s, ...clean } = (saved as Record<string, unknown>);
+  (clean as Record<string, unknown>).merged_from = ids;
+  (clean as Record<string, unknown>).originals_deleted = deleteOriginals;
+  out(clean);
+}
+
+async function cmdSuggestTags(positional: string[], flags: Record<string, string | boolean>) {
+  const content = positional[0];
+  if (!content) fatal("Usage: suggest-tags <content> [--limit n]");
+
+  const limit = validatePositive(parseInt(flag(flags, "limit") ?? "5"), "--limit");
+  const embedding = await embed(content);
+
+  const similar = await rpc("match_memories", {
+    query_embedding: embedding,
+    match_threshold: 0.3,
+    match_count: 20,
+  }) as Record<string, unknown>[];
+
+  if (!Array.isArray(similar) || similar.length === 0) {
+    out({ suggested_tags: [], reason: "no similar memories found" });
+    return;
+  }
+
+  const tagScores: Record<string, number> = {};
+  for (const mem of similar) {
+    const tags = (mem.tags as string[]) ?? [];
+    const sim = (mem.similarity as number) ?? 0.5;
+    for (const t of tags) {
+      tagScores[t] = (tagScores[t] ?? 0) + sim;
+    }
+  }
+
+  const sorted = Object.entries(tagScores)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([tag, score]) => ({ tag, score: Math.round(score * 100) / 100 }));
+
+  out({ suggested_tags: sorted });
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 await loadEnv();
@@ -823,10 +1196,10 @@ if (args.length === 0) {
   console.log(`usage: bun memory.ts <command> [args]
 
 commands:
-  store    <content> [--tags t1,t2] [--source s] [--profile p] [--ttl days] [--metadata '{}']
-  search   <query>   [--limit n] [--threshold f] [--profile p] [--tag t] [--source s] [--min-confidence f]
+  store    <content> [--tags t1,t2] [--source s] [--profile p] [--ttl days] [--metadata '{}'] [--dedup threshold] [--auto-link]
+  search   <query>   [--limit n] [--threshold f] [--profile p] [--tag t] [--source s] [--min-confidence f] [--after date] [--before date]
   get      <uuid>
-  recent   [--limit n] [--source s] [--profile p]
+  recent   [--limit n] [--source s] [--profile p] [--after date] [--before date]
   tag      <tag>     [--limit n] [--profile p]
   update   <uuid>    [--content text] [--confidence f] [--tags t1,t2] [--metadata '{}']
   delete   <uuid>
@@ -840,13 +1213,19 @@ commands:
   export   [--profile p] [--output file.json]
   import   <file.json> [--re-embed]
   re-embed [--profile p] [--batch-size n]
+  compress <uuid> <compressed-text>
+  bulk-delete [--tag t] [--source s] [--profile p] [--before date] [--after date] [--dry-run]
+  context  <query>   [--limit n] [--depth d] [--profile p]
+  store-batch <file.json> [--dedup threshold] [--auto-link] [--profile p] [--source s]
+  merge    <uuid1> <uuid2> [uuid3...] [--delete-originals] [--separator text]
+  suggest-tags <content> [--limit n]
 
 env vars (AM_ prefix takes priority, falls back to unprefixed):
   AM_SUPABASE_URL         Supabase project URL
   AM_SUPABASE_SERVICE_KEY service_role key
   AM_EMBEDDING_PROVIDER   ollama | openai | cohere | voyage | gemini
   AM_EMBEDDING_MODEL      model name for chosen provider
-  AM_EMBEDDING_DIM        must match model output dimension
+  AM_EMBEDDING_DIM        embedding dimension (default: 1024)
   AM_SOURCE               default source tag (default: "agent")
   AM_PROFILE              default profile (default: "default")`);
   process.exit(0);
@@ -873,6 +1252,12 @@ switch (cmd) {
   case "profiles": await cmdProfiles(); break;
   case "export":   await cmdExport(cliFlags); break;
   case "import":   await cmdImport(rest, cliFlags); break;
-  case "re-embed": await cmdReEmbed(cliFlags); break;
-  default:         fatal(`Unknown command: ${cmd}`);
+  case "re-embed":     await cmdReEmbed(cliFlags); break;
+  case "compress":     await cmdCompress(rest, cliFlags); break;
+  case "bulk-delete":  await cmdBulkDelete(cliFlags); break;
+  case "context":      await cmdContext(rest, cliFlags); break;
+  case "store-batch":  await cmdStoreBatch(rest, cliFlags); break;
+  case "merge":        await cmdMerge(rest, cliFlags); break;
+  case "suggest-tags": await cmdSuggestTags(rest, cliFlags); break;
+  default:             fatal(`Unknown command: ${cmd}`);
 }

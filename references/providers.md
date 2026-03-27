@@ -11,7 +11,7 @@ Best for: air-gapped environments, cost-free operation, privacy.
 ```bash
 export AM_EMBEDDING_PROVIDER=ollama
 export AM_EMBEDDING_MODEL=mxbai-embed-large   # or nomic-embed-text
-export AM_EMBEDDING_DIM=1024
+export AM_EMBEDDING_DIM=768
 export AM_OLLAMA_BASE_URL=http://localhost:11434  # default
 ```
 
@@ -52,7 +52,7 @@ Best for: multilingual content, moderate cost.
 ```bash
 export AM_EMBEDDING_PROVIDER=cohere
 export AM_EMBEDDING_MODEL=embed-english-v3.0   # or embed-multilingual-v3.0
-export AM_EMBEDDING_DIM=1024
+export AM_EMBEDDING_DIM=768
 export AM_COHERE_API_KEY=...
 ```
 
@@ -98,18 +98,18 @@ export AM_GEMINI_API_KEY=...
 
 ## Provider comparison
 
-| Provider | Dim | Context | Cost | Privacy | Batch limit | Notes |
-|----------|-----|---------|------|---------|-------------|-------|
-| Ollama (mxbai) | 1024 | 512 tokens | Free | Local | 1 | Good general quality |
-| Ollama (nomic) | 1024 | 8K tokens | Free | Local | 1 | Best for long memories |
-| OpenAI 3-small | 1536 | - | Low | Remote | 2048 | Most common default |
-| OpenAI 3-large | 3072 | - | Medium | Remote | 2048 | Highest quality |
-| Cohere v3 | 1024 | 512 tokens | Low | Remote | 96 | Strong multilingual |
-| Voyage code-2 | 1536 | 16K tokens | Low | Remote | 128 | Best for code retrieval |
-| Voyage 3 | 1024 | 32K tokens | Low | Remote | 128 | Best long-context |
-| Gemini | 768 | - | Low | Remote | 100 | Google ecosystem |
+| Provider       | Dim  | Context    | Cost   | Privacy | Batch limit | Notes                   |
+| -------------- | ---- | ---------- | ------ | ------- | ----------- | ----------------------- |
+| Ollama (mxbai) | 768  | 512 tokens | Free   | Local   | 1           | Good general quality    |
+| Ollama (nomic) | 768  | 8K tokens  | Free   | Local   | 1           | Best for long memories  |
+| OpenAI 3-small | 1536 | -          | Low    | Remote  | 2048        | Most common default     |
+| OpenAI 3-large | 3072 | -          | Medium | Remote  | 2048        | Highest quality         |
+| Cohere v3      | 1024 | 512 tokens | Low    | Remote  | 96          | Strong multilingual     |
+| Voyage code-2  | 1536 | 16K tokens | Low    | Remote  | 128         | Best for code retrieval |
+| Voyage 3       | 1024 | 32K tokens | Low    | Remote  | 128         | Best long-context       |
+| Gemini         | 768  | -          | Low    | Remote  | 100         | Google ecosystem        |
 
-**Recommendation**: Start with Ollama `mxbai-embed-large` (free, local, 1024-dim). Switch to `voyage-code-2` if memories are primarily code/technical content and you want maximum retrieval quality.
+**Recommendation**: Start with Ollama `mxbai-embed-large` (free, local, 768-dim). Switch to `voyage-code-2` if memories are primarily code/technical content and you want maximum retrieval quality.
 
 ---
 

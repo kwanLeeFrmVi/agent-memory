@@ -16,24 +16,25 @@ If you get a permissions error, go to **Database → Extensions** in the dashboa
 
 Choose your provider/model and note the output dimension. **You must pick this before running the schema** — changing it later requires dropping and recreating the table.
 
-| Provider | Model | Dimension |
-|----------|-------|-----------|
-| Ollama | mxbai-embed-large | 1024 |
-| Ollama | nomic-embed-text | 1024 |
-| OpenAI | text-embedding-3-small | 1536 |
-| OpenAI | text-embedding-3-large | 3072 |
-| Cohere | embed-english-v3.0 | 1024 |
-| Voyage AI | voyage-code-2 | 1536 |
-| Voyage AI | voyage-3 | 1024 |
-| Google Gemini | gemini-embedding-001 | 768 |
+| Provider      | Model                  | Dimension |
+| ------------- | ---------------------- | --------- |
+| Ollama        | mxbai-embed-large      | 768       |
+| Ollama        | nomic-embed-text       | 768       |
+| OpenAI        | text-embedding-3-small | 1536      |
+| OpenAI        | text-embedding-3-large | 3072      |
+| Cohere        | embed-english-v3.0     | 1024      |
+| Voyage AI     | voyage-code-2          | 1536      |
+| Voyage AI     | voyage-3               | 1024      |
+| Google Gemini | gemini-embedding-001   | 768       |
 
-Set `AM_EMBEDDING_DIM` in your env to match. Default in schema.sql is **1024** (works for Ollama mxbai-embed-large, Cohere, Voyage-3).
+Set `AM_EMBEDDING_DIM` in your env to match. Default in schema.sql is **768** (works for Ollama mxbai-embed-large, Cohere, Voyage-3).
 
 ## Step 3: Run schema.sql
 
-Open `scripts/schema.sql`, replace `1024` with your chosen dimension if different, then paste the entire file into Supabase SQL Editor and run it.
+Open `scripts/schema.sql`, replace `768` with your chosen dimension if different, then paste the entire file into Supabase SQL Editor and run it.
 
 The schema creates:
+
 - `memories` table with vector embedding, full-text search, tags, TTL, compression fields
 - `memory_edges` table for the knowledge graph
 - HNSW index for fast vector search
@@ -52,7 +53,7 @@ export AM_SUPABASE_SERVICE_KEY="<your-service-role-key>"  # Settings → API →
 # Required — Embedding provider
 export AM_EMBEDDING_PROVIDER="ollama"          # ollama | openai | cohere | voyage | gemini
 export AM_EMBEDDING_MODEL="mxbai-embed-large"
-export AM_EMBEDDING_DIM="1024"
+export AM_EMBEDDING_DIM="768"
 
 # Provider API key (only the one you use)
 export AM_OLLAMA_BASE_URL="http://localhost:11434"   # default for Ollama
