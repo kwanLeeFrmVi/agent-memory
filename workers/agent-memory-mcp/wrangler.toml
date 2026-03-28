@@ -6,7 +6,7 @@ compatibility_flags = ["nodejs_compat"]
 # KV namespace for OAuth token storage
 [[kv_namespaces]]
 binding = "OAUTH_KV"
-id = "your-kv-namespace-id"  # Replace after: npx wrangler kv namespace create OAUTH_KV
+id = "1fad83f0ddb640f7afc78525128ff36f"  # Replace after: npx wrangler kv namespace create OAUTH_KV
 
 # Secrets (set via: npx wrangler secret put <NAME>)
 # - SUPABASE_URL

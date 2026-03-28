@@ -5,28 +5,28 @@
  * Supports both Streamable HTTP and SSE transports.
  */
 import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
-import { createMcpHandler, WorkerTransport } from "agents/mcp";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { Env } from "./core/env.ts";
 import { createMcpServer } from "./server.ts";
 import { authHandler } from "./auth-handler.ts";
 
 // ── MCP Handler Factory ───────────────────────────────────────────────────────
 
-function mcpHandler(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+async function mcpHandler(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const server = createMcpServer(env);
-
-  // Create transport with SSE support and CORS
-  const transport = new WorkerTransport({
-    sessionIdGenerator: () => `session-${crypto.randomUUID()}`,
-    corsOptions: {
-      origin: "*", // Restrict in production if needed
-      methods: "GET,POST,OPTIONS",
-      headers: "Content-Type, Authorization",
-    },
+  
+  // Create web-standard streamable HTTP transport in stateless mode
+  // (no sessionIdGenerator = stateless, works better with serverless)
+  const transport = new WebStandardStreamableHTTPServerTransport({
+    sessionIdGenerator: undefined,
+    enableJsonResponse: true,
   });
-
-  const handler = createMcpHandler(server, { transport });
-  return handler(request, env, ctx);
+  
+  // Connect server to transport
+  server.connect(transport);
+  
+  // Handle the request
+  return await transport.handleRequest(request);
 }
 
 // ── OAuth Provider Configuration ──────────────────────────────────────────────
@@ -71,7 +71,7 @@ export default new OAuthProvider({
 // ── Type augmentation for OAuth context ───────────────────────────────────────
 
 // This makes auth context available in tools via getMcpAuthContext()
-declare module "agents/mcp" {
+declare module "@modelcontextprotocol/sdk/server/mcp.js" {
   interface MCPToolAuthContext {
     userId: string;
     username: string;

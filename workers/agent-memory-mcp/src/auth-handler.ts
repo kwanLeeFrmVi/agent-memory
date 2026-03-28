@@ -85,7 +85,8 @@ function parseAllowedUsers(json: string): Array<{ username: string; password_has
 }
 
 // Render login form HTML
-function renderLoginForm(actionUrl: string, error?: string): string {
+function renderLoginForm(actionUrl: string, error?: string, isDirectLogin: boolean = false): string {
+  const subtitle = isDirectLogin ? "Sign in to verify your credentials" : "Sign in to authorize MCP client access";
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -176,7 +177,7 @@ function renderLoginForm(actionUrl: string, error?: string): string {
 <body>
   <div class="container">
     <h1>🧠 Agent Memory</h1>
-    <p class="subtitle">Sign in to authorize MCP client access</p>
+    <p class="subtitle">${subtitle}</p>
     ${error ? `<div class="error">${error}</div>` : ""}
     <form method="POST" action="${actionUrl}">
       <label for="username">Username</label>
@@ -193,8 +194,50 @@ function renderLoginForm(actionUrl: string, error?: string): string {
 </html>`;
 }
 
+// Render login success page
+function renderLoginSuccess(username: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent Memory - Login Successful</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .container {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      padding: 40px;
+      width: 100%;
+      max-width: 400px;
+      text-align: center;
+    }
+    h1 { color: #333; margin-bottom: 16px; font-size: 24px; }
+    p { color: #666; font-size: 14px; line-height: 1.5; }
+    strong { color: #667eea; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🧠 Login Successful</h1>
+    <p>Welcome, <strong>${username}</strong>!</p>
+    <p>Your credentials have been verified. You can close this page.</p>
+  </div>
+</body>
+</html>`;
+}
+
 // Render consent form HTML
-function renderConsentForm(actionUrl: string, clientName: string, scopes: string[]): string {
+function renderConsentForm(actionUrl: string, clientName: string, scopes: string[], username: string): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -285,6 +328,7 @@ function renderConsentForm(actionUrl: string, clientName: string, scopes: string
     </div>
     <form method="POST" action="${actionUrl}">
       <input type="hidden" name="action" value="allow">
+      <input type="hidden" name="username" value="${username}">
       <div class="buttons">
         <button type="submit" name="action" value="deny" class="deny">Deny</button>
         <button type="submit" name="action" value="allow" class="allow">Allow</button>
@@ -321,77 +365,124 @@ export async function authHandler(
 
   // Authorization endpoint - GET shows login form
   if (url.pathname === "/authorize" && request.method === "GET") {
-    return new Response(renderLoginForm(url.pathname), {
+    // Check if this is a direct visit (no OAuth params)
+    const clientId = url.searchParams.get("client_id");
+    const redirectUri = url.searchParams.get("redirect_uri");
+    
+    if (!clientId || !redirectUri) {
+      // Direct visit - show a simple login form that just validates credentials
+      return new Response(renderLoginForm(url.pathname + url.search, undefined, true), {
+        headers: { "Content-Type": "text/html" },
+      });
+    }
+    
+    // OAuth flow - preserve full URL with query params for form submission
+    return new Response(renderLoginForm(url.pathname + url.search), {
       headers: { "Content-Type": "text/html" },
     });
   }
 
-  // Authorization endpoint - POST processes login
+  // Authorization endpoint - POST handles both login and consent
   if (url.pathname === "/authorize" && request.method === "POST") {
     const formData = await request.formData();
+    const action = formData.get("action") as string;
+
+    // Handle consent form submission (action field present)
+    if (action === "deny") {
+      return new Response("Authorization denied", { status: 401 });
+    }
+
+    if (action === "allow") {
+      // Re-parse to get the OAuth params (they should be in the query string)
+      const oauthReqInfo = await env.OAUTH_PROVIDER.parseAuthRequest(request);
+
+      // Get username from hidden field
+      const username = formData.get("username") as string;
+      const allowedUsers = parseAllowedUsers(env.AUTH_ALLOWED_USERS);
+      const user = allowedUsers.find(u => u.username === username);
+
+      if (!user) {
+        return new Response("Session expired - please retry login", { status: 400 });
+      }
+
+      // Complete authorization
+      let scopes: string[] = ["memory:read"];
+      if (oauthReqInfo.scope) {
+        scopes = Array.isArray(oauthReqInfo.scope) 
+          ? oauthReqInfo.scope 
+          : typeof oauthReqInfo.scope === 'string' 
+            ? oauthReqInfo.scope.split(" ") 
+            : ["memory:read"];
+      }
+
+      const { redirectTo } = await env.OAUTH_PROVIDER.completeAuthorization({
+        request: oauthReqInfo,
+        userId: username,
+        metadata: { login_time: new Date().toISOString() },
+        scope: scopes,
+        props: {
+          userId: username,
+          username: username,
+        },
+      });
+
+      return Response.redirect(redirectTo, 302);
+    }
+
+    // Handle login form submission (no action field)
     const username = formData.get("username") as string;
     const password = formData.get("password") as string;
+    
+    console.log("Login attempt:", { username, hasPassword: !!password, url: request.url });
 
     // Validate credentials
     const allowedUsers = parseAllowedUsers(env.AUTH_ALLOWED_USERS);
     const user = allowedUsers.find(u => u.username === username);
 
     if (!user || !(await verifyPassword(password, user.password_hash))) {
-      return new Response(renderLoginForm(url.pathname, "Invalid username or password"), {
+      return new Response(renderLoginForm(url.pathname + url.search, "Invalid username or password"), {
         headers: { "Content-Type": "text/html" },
       });
     }
 
-    // Parse the original OAuth request
+    // Parse the original OAuth request from URL query params (POST body doesn't contain them)
     const oauthReqInfo = await env.OAUTH_PROVIDER.parseAuthRequest(request);
-    const clientInfo = await env.OAUTH_PROVIDER.lookupClient(oauthReqInfo.client_id);
-
-    if (!clientInfo) {
-      return new Response("Unknown client", { status: 400 });
+    
+    // Also get params directly from URL since form POST preserves them in query string
+    const clientId = url.searchParams.get("client_id");
+    const redirectUri = url.searchParams.get("redirect_uri");
+    
+    console.log("OAuth params from URL:", { clientId, redirectUri });
+    
+    // Check if this is a direct login (no OAuth client)
+    if (!clientId || !redirectUri) {
+      // Direct login - show success page
+      return new Response(renderLoginSuccess(username), {
+        headers: { "Content-Type": "text/html" },
+      });
     }
+    
+    const clientInfo = await env.OAUTH_PROVIDER.lookupClient(clientId!);
+    
+    console.log("Client lookup result:", { clientId, found: !!clientInfo });
 
-    // Show consent form
-    const scopes = oauthReqInfo.scope ? oauthReqInfo.scope.split(" ") : ["memory:read"];
-    return new Response(renderConsentForm(url.pathname, clientInfo.client_name || oauthReqInfo.client_id, scopes), {
+    // For MCP clients like Claude that don't dynamically register, 
+    // we still want to allow the authorization to proceed.
+    const clientName = clientInfo?.client_name || clientId || "MCP Client";
+
+    // Show consent form with username passed through, preserve query params
+    let scopes: string[] = ["memory:read"];
+    if (oauthReqInfo.scope) {
+      scopes = Array.isArray(oauthReqInfo.scope) 
+        ? oauthReqInfo.scope 
+        : typeof oauthReqInfo.scope === 'string' 
+          ? oauthReqInfo.scope.split(" ") 
+          : ["memory:read"];
+    }
+    
+    return new Response(renderConsentForm(url.pathname + url.search, clientName, scopes, username), {
       headers: { "Content-Type": "text/html" },
     });
-  }
-
-  // Handle consent form submission
-  if (url.pathname === "/authorize" && request.method === "POST") {
-    const formData = await request.formData();
-    const action = formData.get("action") as string;
-
-    if (action === "deny") {
-      return new Response("Authorization denied", { status: 401 });
-    }
-
-    // Re-parse to get the OAuth params (they should be in the query string)
-    const oauthReqInfo = await env.OAUTH_PROVIDER.parseAuthRequest(request);
-
-    // Get username from previous step (in a real implementation, you'd use session state)
-    // For simplicity, we'll require the form to include it
-    const username = formData.get("username") as string;
-    const allowedUsers = parseAllowedUsers(env.AUTH_ALLOWED_USERS);
-    const user = allowedUsers.find(u => u.username === username);
-
-    if (!user) {
-      return new Response("Session expired - please retry login", { status: 400 });
-    }
-
-    // Complete authorization
-    const { redirectTo } = await env.OAUTH_PROVIDER.completeAuthorization({
-      request: oauthReqInfo,
-      userId: username,
-      metadata: { login_time: new Date().toISOString() },
-      scope: oauthReqInfo.scope ? oauthReqInfo.scope.split(" ") : ["memory:read"],
-      props: {
-        userId: username,
-        username: username,
-      },
-    });
-
-    return Response.redirect(redirectTo, 302);
   }
 
   return new Response("Not found", { status: 404 });

@@ -341,7 +341,7 @@ async function main() {
 
   // Step 4: Embedding Provider
   log.step('Embedding Provider Configuration');
-  const embeddingProvider = await p.select({
+  const embeddingProvider: Config['embeddingProvider'] = await p.select({
     message: 'Select embedding provider:',
     choices: [
       { name: 'OpenAI (text-embedding-3-small)', value: 'openai' },
@@ -533,7 +533,18 @@ async function main() {
         console.log(`${colors.bright}Endpoints:${colors.reset}`);
         console.log(`  MCP:           ${workerUrl}/mcp`);
         console.log(`  MCP (SSE):     ${workerUrl}/mcp/sse`);
-        console.log(`  OAuth:         ${workerUrl}/.well-known/oauth-authorization-server`);
+        console.log(`  OAuth:         ${workerUrl}/.well-known/oauth-authorization-server\n`);
+
+        // Output mcpServer config JSON
+        const mcpConfig = {
+          mcpServers: {
+            'agent-memory': {
+              url: `${workerUrl}/mcp/sse`,
+            },
+          },
+        };
+        console.log(`${colors.bright}MCP Server Config (JSON):${colors.reset}`);
+        console.log(`${colors.cyan}${JSON.stringify(mcpConfig, null, 2)}${colors.reset}\n`);
       }
     } else {
       log.error('Deployment failed');

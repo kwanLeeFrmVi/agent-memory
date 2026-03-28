@@ -78,6 +78,7 @@ export async function embed(env: Env, text: string): Promise<number[]> {
     case "gemini": {
       const key = env.GEMINI_API_KEY;
       if (!key) throw new Error("Missing GEMINI_API_KEY");
+      const dim = envEmbeddingDim(env);
       const res = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent?key=${key}`,
         {
@@ -87,6 +88,7 @@ export async function embed(env: Env, text: string): Promise<number[]> {
             model: `models/${model}`,
             content: { parts: [{ text }] },
             taskType: "RETRIEVAL_DOCUMENT",
+            outputDimensionality: dim,
           }),
         }
       );
@@ -159,6 +161,7 @@ export async function embedForQuery(env: Env, text: string): Promise<number[]> {
   if (provider === "gemini") {
     const key = env.GEMINI_API_KEY;
     if (!key) throw new Error("Missing GEMINI_API_KEY");
+    const dim = envEmbeddingDim(env);
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent?key=${key}`,
       {
@@ -168,6 +171,7 @@ export async function embedForQuery(env: Env, text: string): Promise<number[]> {
           model: `models/${model}`,
           content: { parts: [{ text }] },
           taskType: "RETRIEVAL_QUERY",
+          outputDimensionality: dim,
         }),
       }
     );

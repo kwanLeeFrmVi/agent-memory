@@ -109,8 +109,9 @@ export async function memoryHealth(env: Env, _params: z.infer<typeof healthSchem
     checks.embedding_provider = "ok";
     checks.embedding_dim = vec.length;
     checks.embedding_model = getEnvValue(env, "EMBEDDING_MODEL");
-  } catch {
+  } catch (e: unknown) {
     checks.embedding_provider = "failed";
+    checks.embedding_error = (e as Error).message ?? String(e);
   }
 
   // 4. Check dimension match
