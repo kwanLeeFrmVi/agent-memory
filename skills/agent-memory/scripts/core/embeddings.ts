@@ -83,16 +83,19 @@ export async function embed(text: string): Promise<number[]> {
 
     case "gemini": {
       const key = required("GEMINI_API_KEY");
+      const dim = envEmbeddingDim();
+      const body: Record<string, unknown> = {
+        model: `models/${model}`,
+        content: { parts: [{ text }] },
+        taskType: "RETRIEVAL_DOCUMENT",
+      };
+      if (dim) body.outputDimensionality = dim;
       const res = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent?key=${key}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: `models/${model}`,
-            content: { parts: [{ text }] },
-            taskType: "RETRIEVAL_DOCUMENT",
-          }),
+          body: JSON.stringify(body),
         }
       );
       if (!res.ok) fatal("Gemini embedding failed", sanitizeErrorText(await res.text()));
@@ -157,16 +160,19 @@ export async function embedForQuery(text: string): Promise<number[]> {
 
   if (provider === "gemini") {
     const key = required("GEMINI_API_KEY");
+    const dim = envEmbeddingDim();
+    const body: Record<string, unknown> = {
+      model: `models/${model}`,
+      content: { parts: [{ text }] },
+      taskType: "RETRIEVAL_QUERY",
+    };
+    if (dim) body.outputDimensionality = dim;
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent?key=${key}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: `models/${model}`,
-          content: { parts: [{ text }] },
-          taskType: "RETRIEVAL_QUERY",
-        }),
+        body: JSON.stringify(body),
       }
     );
     if (!res.ok) fatal("Gemini query embedding failed", sanitizeErrorText(await res.text()));
