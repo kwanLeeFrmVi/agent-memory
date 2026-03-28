@@ -84,6 +84,7 @@ export function createMcpServer(env: Env): McpServer {
   const server = new McpServer({
     name: "agent-memory",
     version: "1.0.0",
+    description: "Persistent memory storage with semantic search, graph relationships, and TTL management",
   });
 
   // ── Store Tools ─────────────────────────────────────────────────────────────
@@ -92,7 +93,7 @@ export function createMcpServer(env: Env): McpServer {
     "memory_store",
     {
       title: "Memory Store",
-      description: "Store a new memory with content, tags, and optional metadata. Supports deduplication, auto-linking, and TTL.",
+      description: "Store a new memory.",
       inputSchema: storeSchema,
     },
     async (params) => {
@@ -105,7 +106,7 @@ export function createMcpServer(env: Env): McpServer {
     "memory_store_batch",
     {
       title: "Memory Store Batch",
-      description: "Store multiple memories at once. Accepts a JSON array of memory objects.",
+      description: "Store multiple memories.",
       inputSchema: storeBatchSchema,
     },
     async (params) => {
@@ -118,7 +119,7 @@ export function createMcpServer(env: Env): McpServer {
     "memory_store_decision",
     {
       title: "Memory Store Decision",
-      description: "Store a decision with rationale, alternatives, and auto-link to related memories.",
+      description: "Store a decision with rationale and alternatives.",
       inputSchema: storeDecisionSchema,
     },
     async (params) => {
@@ -133,7 +134,7 @@ export function createMcpServer(env: Env): McpServer {
     "memory_search",
     {
       title: "Memory Search",
-      description: "Hybrid search (semantic + keyword) for memories. Supports filtering by profile, tag, source, date, and importance.",
+      description: "Search memories with semantic and keyword support.",
       inputSchema: searchSchema,
     },
     async (params) => {
@@ -146,7 +147,7 @@ export function createMcpServer(env: Env): McpServer {
     "memory_context",
     {
       title: "Memory Context",
-      description: "Get context for a query by finding related memories via graph traversal.",
+      description: "Get query context via graph traversal.",
       inputSchema: contextSchema,
     },
     async (params) => {
@@ -159,7 +160,7 @@ export function createMcpServer(env: Env): McpServer {
     "memory_suggest_tags",
     {
       title: "Memory Suggest Tags",
-      description: "Suggest tags for content based on similar existing memories.",
+      description: "Suggest tags based on existing memories.",
       inputSchema: suggestTagsSchema,
     },
     async (params) => {
@@ -174,7 +175,7 @@ export function createMcpServer(env: Env): McpServer {
     "memory_get",
     {
       title: "Memory Get",
-      description: "Retrieve a single memory by UUID.",
+      description: "Get memory by UUID.",
       inputSchema: getSchema,
     },
     async (params) => {
@@ -187,7 +188,7 @@ export function createMcpServer(env: Env): McpServer {
     "memory_recent",
     {
       title: "Memory Recent",
-      description: "List recent memories, optionally filtered by source, profile, date, or importance.",
+      description: "List recent memories.",
       inputSchema: recentSchema,
     },
     async (params) => {
@@ -200,7 +201,7 @@ export function createMcpServer(env: Env): McpServer {
     "memory_tag",
     {
       title: "Memory Tag",
-      description: "List memories with a specific tag.",
+      description: "List memories by tag.",
       inputSchema: tagSchema,
     },
     async (params) => {
@@ -213,7 +214,7 @@ export function createMcpServer(env: Env): McpServer {
     "memory_update",
     {
       title: "Memory Update",
-      description: "Update a memory's content, confidence, tags, or metadata.",
+      description: "Update a memory.",
       inputSchema: updateSchema,
     },
     async (params) => {
@@ -226,7 +227,7 @@ export function createMcpServer(env: Env): McpServer {
     "memory_delete",
     {
       title: "Memory Delete",
-      description: "Delete a memory by UUID.",
+      description: "Delete memory by UUID.",
       inputSchema: deleteSchema,
     },
     async (params) => {
@@ -239,7 +240,7 @@ export function createMcpServer(env: Env): McpServer {
     "memory_compress",
     {
       title: "Memory Compress",
-      description: "Compress a memory's content to a summarized version.",
+      description: "Compress memory content.",
       inputSchema: compressSchema,
     },
     async (params) => {
@@ -252,7 +253,7 @@ export function createMcpServer(env: Env): McpServer {
     "memory_revert",
     {
       title: "Memory Revert",
-      description: "Revert a compressed memory back to its original content.",
+      description: "Revert compressed memory.",
       inputSchema: revertSchema,
     },
     async (params) => {
@@ -265,7 +266,7 @@ export function createMcpServer(env: Env): McpServer {
     "memory_merge",
     {
       title: "Memory Merge",
-      description: "Merge multiple memories into one. Optionally delete originals.",
+      description: "Merge multiple memories.",
       inputSchema: mergeSchema,
     },
     async (params) => {
@@ -280,7 +281,7 @@ export function createMcpServer(env: Env): McpServer {
     "memory_link",
     {
       title: "Memory Link",
-      description: "Create an edge between two memories (supports, contradicts, expands, related, depends_on, similar).",
+      description: "Link two memories.",
       inputSchema: linkSchema,
     },
     async (params) => {
@@ -293,7 +294,7 @@ export function createMcpServer(env: Env): McpServer {
     "memory_unlink",
     {
       title: "Memory Unlink",
-      description: "Remove an edge between two memories.",
+      description: "Unlink two memories.",
       inputSchema: unlinkSchema,
     },
     async (params) => {
@@ -306,7 +307,7 @@ export function createMcpServer(env: Env): McpServer {
     "memory_related",
     {
       title: "Memory Related",
-      description: "Find memories related to a starting memory via graph traversal.",
+      description: "Find related memories.",
       inputSchema: relatedSchema,
     },
     async (params) => {
@@ -319,7 +320,7 @@ export function createMcpServer(env: Env): McpServer {
     "memory_link_unlinked",
     {
       title: "Memory Link Unlinked",
-      description: "Auto-link orphan memories to similar ones based on embedding similarity.",
+      description: "Auto-link orphan memories.",
       inputSchema: linkUnlinkedSchema,
     },
     async (params) => {
@@ -332,7 +333,7 @@ export function createMcpServer(env: Env): McpServer {
     "memory_impact",
     {
       title: "Memory Impact",
-      description: "Find which memories depend on (link to) a given memory.",
+      description: "Find dependent memories.",
       inputSchema: impactSchema,
     },
     async (params) => {
@@ -347,7 +348,7 @@ export function createMcpServer(env: Env): McpServer {
     "memory_cleanup",
     {
       title: "Memory Cleanup",
-      description: "Delete expired memories (those past their TTL).",
+      description: "Delete expired memories.",
       inputSchema: cleanupSchema,
     },
     async (params) => {
@@ -360,7 +361,7 @@ export function createMcpServer(env: Env): McpServer {
     "memory_stats",
     {
       title: "Memory Stats",
-      description: "Get statistics about memories (count, by profile, by source, etc.).",
+      description: "Get memory statistics.",
       inputSchema: statsSchema,
     },
     async (params) => {
@@ -373,7 +374,7 @@ export function createMcpServer(env: Env): McpServer {
     "memory_health",
     {
       title: "Memory Health",
-      description: "Check system health (Supabase connection, RPC functions, embedding provider).",
+      description: "Check system health.",
       inputSchema: healthSchema,
     },
     async (params) => {
@@ -386,7 +387,7 @@ export function createMcpServer(env: Env): McpServer {
     "memory_profiles",
     {
       title: "Memory Profiles",
-      description: "List all memory profiles and their memory counts.",
+      description: "List memory profiles.",
       inputSchema: profilesSchema,
     },
     async (params) => {
@@ -399,7 +400,7 @@ export function createMcpServer(env: Env): McpServer {
     "memory_export",
     {
       title: "Memory Export",
-      description: "Export all memories as JSON (optionally filtered by profile).",
+      description: "Export all memories.",
       inputSchema: exportSchema,
     },
     async (params) => {
@@ -412,7 +413,7 @@ export function createMcpServer(env: Env): McpServer {
     "memory_re_embed",
     {
       title: "Memory Re-embed",
-      description: "Re-generate embeddings for all memories (use after changing embedding model).",
+      description: "Re-generate memory embeddings.",
       inputSchema: reEmbedSchema,
     },
     async (params) => {
@@ -425,7 +426,7 @@ export function createMcpServer(env: Env): McpServer {
     "memory_bulk_delete",
     {
       title: "Memory Bulk Delete",
-      description: "Delete multiple memories matching criteria (tag, source, profile, date).",
+      description: "Bulk delete memories.",
       inputSchema: bulkDeleteSchema,
     },
     async (params) => {
@@ -438,7 +439,7 @@ export function createMcpServer(env: Env): McpServer {
     "memory_set_profile_ttl",
     {
       title: "Memory Set Profile TTL",
-      description: "Set default TTL (in days) for a profile. New memories will auto-expire.",
+      description: "Set default profile TTL.",
       inputSchema: setProfileTtlSchema,
     },
     async (params) => {
@@ -451,7 +452,7 @@ export function createMcpServer(env: Env): McpServer {
     "memory_rename_tag",
     {
       title: "Memory Rename Tag",
-      description: "Rename a tag across all memories.",
+      description: "Rename a tag.",
       inputSchema: renameTagSchema,
     },
     async (params) => {
