@@ -88,30 +88,39 @@ export function createMcpServer(env: Env): McpServer {
 
   // ── Store Tools ─────────────────────────────────────────────────────────────
 
-  server.tool(
+  server.registerTool(
     "memory_store",
-    "Store a new memory with content, tags, and optional metadata. Supports deduplication, auto-linking, and TTL.",
-    storeSchema.shape,
+    {
+      title: "Memory Store",
+      description: "Store a new memory with content, tags, and optional metadata. Supports deduplication, auto-linking, and TTL.",
+      inputSchema: storeSchema,
+    },
     async (params) => {
       const result = await memoryStore(env, params);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
 
-  server.tool(
+  server.registerTool(
     "memory_store_batch",
-    "Store multiple memories at once. Accepts a JSON array of memory objects.",
-    storeBatchSchema.shape,
+    {
+      title: "Memory Store Batch",
+      description: "Store multiple memories at once. Accepts a JSON array of memory objects.",
+      inputSchema: storeBatchSchema,
+    },
     async (params) => {
       const result = await memoryStoreBatch(env, params);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
 
-  server.tool(
+  server.registerTool(
     "memory_store_decision",
-    "Store a decision with rationale, alternatives, and auto-link to related memories.",
-    storeDecisionSchema.shape,
+    {
+      title: "Memory Store Decision",
+      description: "Store a decision with rationale, alternatives, and auto-link to related memories.",
+      inputSchema: storeDecisionSchema,
+    },
     async (params) => {
       const result = await memoryStoreDecision(env, params);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
@@ -120,30 +129,39 @@ export function createMcpServer(env: Env): McpServer {
 
   // ── Search Tools ────────────────────────────────────────────────────────────
 
-  server.tool(
+  server.registerTool(
     "memory_search",
-    "Hybrid search (semantic + keyword) for memories. Supports filtering by profile, tag, source, date, and importance.",
-    searchSchema.shape,
+    {
+      title: "Memory Search",
+      description: "Hybrid search (semantic + keyword) for memories. Supports filtering by profile, tag, source, date, and importance.",
+      inputSchema: searchSchema,
+    },
     async (params) => {
       const result = await memorySearch(env, params);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
 
-  server.tool(
+  server.registerTool(
     "memory_context",
-    "Get context for a query by finding related memories via graph traversal.",
-    contextSchema.shape,
+    {
+      title: "Memory Context",
+      description: "Get context for a query by finding related memories via graph traversal.",
+      inputSchema: contextSchema,
+    },
     async (params) => {
       const result = await memoryContext(env, params);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
 
-  server.tool(
+  server.registerTool(
     "memory_suggest_tags",
-    "Suggest tags for content based on similar existing memories.",
-    suggestTagsSchema.shape,
+    {
+      title: "Memory Suggest Tags",
+      description: "Suggest tags for content based on similar existing memories.",
+      inputSchema: suggestTagsSchema,
+    },
     async (params) => {
       const result = await memorySuggestTags(env, params);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
@@ -152,80 +170,104 @@ export function createMcpServer(env: Env): McpServer {
 
   // ── CRUD Tools ───────────────────────────────────────────────────────────────
 
-  server.tool(
+  server.registerTool(
     "memory_get",
-    "Retrieve a single memory by UUID.",
-    getSchema.shape,
+    {
+      title: "Memory Get",
+      description: "Retrieve a single memory by UUID.",
+      inputSchema: getSchema,
+    },
     async (params) => {
       const result = await memoryGet(env, params);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
 
-  server.tool(
+  server.registerTool(
     "memory_recent",
-    "List recent memories, optionally filtered by source, profile, date, or importance.",
-    recentSchema.shape,
+    {
+      title: "Memory Recent",
+      description: "List recent memories, optionally filtered by source, profile, date, or importance.",
+      inputSchema: recentSchema,
+    },
     async (params) => {
       const result = await memoryRecent(env, params);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
 
-  server.tool(
+  server.registerTool(
     "memory_tag",
-    "List memories with a specific tag.",
-    tagSchema.shape,
+    {
+      title: "Memory Tag",
+      description: "List memories with a specific tag.",
+      inputSchema: tagSchema,
+    },
     async (params) => {
       const result = await memoryTag(env, params);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
 
-  server.tool(
+  server.registerTool(
     "memory_update",
-    "Update a memory's content, confidence, tags, or metadata.",
-    updateSchema.shape,
+    {
+      title: "Memory Update",
+      description: "Update a memory's content, confidence, tags, or metadata.",
+      inputSchema: updateSchema,
+    },
     async (params) => {
       const result = await memoryUpdate(env, params);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
 
-  server.tool(
+  server.registerTool(
     "memory_delete",
-    "Delete a memory by UUID.",
-    deleteSchema.shape,
+    {
+      title: "Memory Delete",
+      description: "Delete a memory by UUID.",
+      inputSchema: deleteSchema,
+    },
     async (params) => {
       const result = await memoryDelete(env, params);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
 
-  server.tool(
+  server.registerTool(
     "memory_compress",
-    "Compress a memory's content to a summarized version.",
-    compressSchema.shape,
+    {
+      title: "Memory Compress",
+      description: "Compress a memory's content to a summarized version.",
+      inputSchema: compressSchema,
+    },
     async (params) => {
       const result = await memoryCompress(env, params);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
 
-  server.tool(
+  server.registerTool(
     "memory_revert",
-    "Revert a compressed memory back to its original content.",
-    revertSchema.shape,
+    {
+      title: "Memory Revert",
+      description: "Revert a compressed memory back to its original content.",
+      inputSchema: revertSchema,
+    },
     async (params) => {
       const result = await memoryRevert(env, params);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
 
-  server.tool(
+  server.registerTool(
     "memory_merge",
-    "Merge multiple memories into one. Optionally delete originals.",
-    mergeSchema.shape,
+    {
+      title: "Memory Merge",
+      description: "Merge multiple memories into one. Optionally delete originals.",
+      inputSchema: mergeSchema,
+    },
     async (params) => {
       const result = await memoryMerge(env, params);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
@@ -234,50 +276,65 @@ export function createMcpServer(env: Env): McpServer {
 
   // ── Graph Tools ──────────────────────────────────────────────────────────────
 
-  server.tool(
+  server.registerTool(
     "memory_link",
-    "Create an edge between two memories (supports, contradicts, expands, related, depends_on, similar).",
-    linkSchema.shape,
+    {
+      title: "Memory Link",
+      description: "Create an edge between two memories (supports, contradicts, expands, related, depends_on, similar).",
+      inputSchema: linkSchema,
+    },
     async (params) => {
       const result = await memoryLink(env, params);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
 
-  server.tool(
+  server.registerTool(
     "memory_unlink",
-    "Remove an edge between two memories.",
-    unlinkSchema.shape,
+    {
+      title: "Memory Unlink",
+      description: "Remove an edge between two memories.",
+      inputSchema: unlinkSchema,
+    },
     async (params) => {
       const result = await memoryUnlink(env, params);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
 
-  server.tool(
+  server.registerTool(
     "memory_related",
-    "Find memories related to a starting memory via graph traversal.",
-    relatedSchema.shape,
+    {
+      title: "Memory Related",
+      description: "Find memories related to a starting memory via graph traversal.",
+      inputSchema: relatedSchema,
+    },
     async (params) => {
       const result = await memoryRelated(env, params);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
 
-  server.tool(
+  server.registerTool(
     "memory_link_unlinked",
-    "Auto-link orphan memories to similar ones based on embedding similarity.",
-    linkUnlinkedSchema.shape,
+    {
+      title: "Memory Link Unlinked",
+      description: "Auto-link orphan memories to similar ones based on embedding similarity.",
+      inputSchema: linkUnlinkedSchema,
+    },
     async (params) => {
       const result = await memoryLinkUnlinked(env, params);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
 
-  server.tool(
+  server.registerTool(
     "memory_impact",
-    "Find which memories depend on (link to) a given memory.",
-    impactSchema.shape,
+    {
+      title: "Memory Impact",
+      description: "Find which memories depend on (link to) a given memory.",
+      inputSchema: impactSchema,
+    },
     async (params) => {
       const result = await memoryImpact(env, params);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
@@ -286,90 +343,117 @@ export function createMcpServer(env: Env): McpServer {
 
   // ── Admin Tools ──────────────────────────────────────────────────────────────
 
-  server.tool(
+  server.registerTool(
     "memory_cleanup",
-    "Delete expired memories (those past their TTL).",
-    cleanupSchema.shape,
+    {
+      title: "Memory Cleanup",
+      description: "Delete expired memories (those past their TTL).",
+      inputSchema: cleanupSchema,
+    },
     async (params) => {
       const result = await memoryCleanup(env, params);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
 
-  server.tool(
+  server.registerTool(
     "memory_stats",
-    "Get statistics about memories (count, by profile, by source, etc.).",
-    statsSchema.shape,
+    {
+      title: "Memory Stats",
+      description: "Get statistics about memories (count, by profile, by source, etc.).",
+      inputSchema: statsSchema,
+    },
     async (params) => {
       const result = await memoryStats(env, params);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
 
-  server.tool(
+  server.registerTool(
     "memory_health",
-    "Check system health (Supabase connection, RPC functions, embedding provider).",
-    healthSchema.shape,
+    {
+      title: "Memory Health",
+      description: "Check system health (Supabase connection, RPC functions, embedding provider).",
+      inputSchema: healthSchema,
+    },
     async (params) => {
       const result = await memoryHealth(env, params);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
 
-  server.tool(
+  server.registerTool(
     "memory_profiles",
-    "List all memory profiles and their memory counts.",
-    profilesSchema.shape,
+    {
+      title: "Memory Profiles",
+      description: "List all memory profiles and their memory counts.",
+      inputSchema: profilesSchema,
+    },
     async (params) => {
       const result = await memoryProfiles(env, params);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
 
-  server.tool(
+  server.registerTool(
     "memory_export",
-    "Export all memories as JSON (optionally filtered by profile).",
-    exportSchema.shape,
+    {
+      title: "Memory Export",
+      description: "Export all memories as JSON (optionally filtered by profile).",
+      inputSchema: exportSchema,
+    },
     async (params) => {
       const result = await memoryExport(env, params);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
 
-  server.tool(
+  server.registerTool(
     "memory_re_embed",
-    "Re-generate embeddings for all memories (use after changing embedding model).",
-    reEmbedSchema.shape,
+    {
+      title: "Memory Re-embed",
+      description: "Re-generate embeddings for all memories (use after changing embedding model).",
+      inputSchema: reEmbedSchema,
+    },
     async (params) => {
       const result = await memoryReEmbed(env, params);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
 
-  server.tool(
+  server.registerTool(
     "memory_bulk_delete",
-    "Delete multiple memories matching criteria (tag, source, profile, date).",
-    bulkDeleteSchema.shape,
+    {
+      title: "Memory Bulk Delete",
+      description: "Delete multiple memories matching criteria (tag, source, profile, date).",
+      inputSchema: bulkDeleteSchema,
+    },
     async (params) => {
       const result = await memoryBulkDelete(env, params);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
 
-  server.tool(
+  server.registerTool(
     "memory_set_profile_ttl",
-    "Set default TTL (in days) for a profile. New memories will auto-expire.",
-    setProfileTtlSchema.shape,
+    {
+      title: "Memory Set Profile TTL",
+      description: "Set default TTL (in days) for a profile. New memories will auto-expire.",
+      inputSchema: setProfileTtlSchema,
+    },
     async (params) => {
       const result = await memorySetProfileTtl(env, params);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
 
-  server.tool(
+  server.registerTool(
     "memory_rename_tag",
-    "Rename a tag across all memories.",
-    renameTagSchema.shape,
+    {
+      title: "Memory Rename Tag",
+      description: "Rename a tag across all memories.",
+      inputSchema: renameTagSchema,
+    },
     async (params) => {
       const result = await memoryRenameTag(env, params);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
