@@ -42,7 +42,7 @@ All env vars use the `AM_` prefix to avoid collisions with other tools. If an `A
 ```bash
 # Required — Supabase connection
 export AM_SUPABASE_URL="https://<project-ref>.supabase.co"
-export AM_SUPABASE_SERVICE_KEY="<your-service-role-key>"  # Settings → API → service_role
+export AM_SUPABASE_SERVICE_KEY="<your-api-private-key>"  # Settings → API Keys → New Secret Key (formerly service_role)
 
 # Required — Embedding provider
 export AM_EMBEDDING_PROVIDER="ollama"          # ollama | openai | cohere | voyage | gemini
@@ -61,8 +61,8 @@ export AM_SOURCE="agent"                       # default --source value
 export AM_PROFILE="default"                    # default --profile value
 ```
 
-Get your Supabase keys from: **Project Settings → API**.
-Use the **service_role** key (not the anon key) so the skill can insert and delete.
+Get your Supabase keys from: **Project Settings → API → API Keys**.
+Use the **New Secret Key** (formerly service_role key, not the anon key) so the skill can insert and delete.
 
 ## Step 5: Verify
 

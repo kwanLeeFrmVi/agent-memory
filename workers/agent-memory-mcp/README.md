@@ -60,7 +60,7 @@ Set each required secret via `wrangler secret put`:
 ```bash
 # Supabase (required)
 bunx wrangler secret put SUPABASE_URL
-bunx wrangler secret put SUPABASE_SERVICE_KEY
+bunx wrangler secret put SUPABASE_SERVICE_KEY  # API Private Key from Settings → API Keys
 
 # Embedding provider (required)
 bunx wrangler secret put EMBEDDING_PROVIDER  # openai | cohere | voyage | gemini

@@ -169,7 +169,7 @@ async function main() {
   });
   
   const supabaseServiceKey = await p.password({
-    message: 'Supabase Service Role Key:',
+    message: 'Supabase API Private Key (Project Settings → API Keys → New Secret Key):',
     mask: '*',
   });
 

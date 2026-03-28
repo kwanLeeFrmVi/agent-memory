@@ -84,7 +84,7 @@ bun $MEMORY health
 
 ## Environment (`AM_` prefix)
 
-`SUPABASE_URL`, `SUPABASE_SERVICE_KEY` (role key), `EMBEDDING_PROVIDER` (ollama|openai|cohere|voyage|gemini), `EMBEDDING_MODEL`, `EMBEDDING_DIM` (must match). Provider keys (e.g., `OLLAMA_BASE_URL`, `OPENAI_API_KEY`). Defaults: `SOURCE=agent`, `PROFILE=default`.
+`SUPABASE_URL`, `SUPABASE_SERVICE_KEY` (API private key, formerly service_role), `EMBEDDING_PROVIDER` (ollama|openai|cohere|voyage|gemini), `EMBEDDING_MODEL`, `EMBEDDING_DIM` (must match). Provider keys (e.g., `OLLAMA_BASE_URL`, `OPENAI_API_KEY`). Defaults: `SOURCE=agent`, `PROFILE=default`.
 
 ## Docs
 
