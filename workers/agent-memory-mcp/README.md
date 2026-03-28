@@ -11,16 +11,38 @@ A Cloudflare Workers MCP server for the [agent-memory](../skills/agent-memory) s
 
 ## Quick Start
 
-### 1. Install Dependencies
+### Option A: Interactive Setup (Recommended)
+
+Run the TUI setup wizard for guided configuration:
 
 ```bash
-npm install
+bun install
+bun run setup
 ```
 
-### 2. Create KV Namespace
+The wizard will:
+
+1. Check Cloudflare authentication
+2. Create KV namespace
+3. Configure Supabase credentials
+4. Set up embedding provider (OpenAI, Cohere, Voyage, or Gemini)
+5. Create authentication users
+6. Update `wrangler.toml` automatically
+7. Set all Cloudflare secrets
+8. Deploy the worker
+
+### Option B: Manual Setup
+
+#### 1. Install Dependencies
 
 ```bash
-npx wrangler kv namespace create OAUTH_KV
+bun install
+```
+
+#### 2. Create KV Namespace
+
+```bash
+bunx wrangler kv namespace create OAUTH_KV
 ```
 
 Copy the `id` from the output and update `wrangler.toml`:
@@ -31,28 +53,28 @@ binding = "OAUTH_KV"
 id = "your-kv-namespace-id-here"
 ```
 
-### 3. Set Secrets
+#### 3. Set Secrets
 
 Set each required secret via `wrangler secret put`:
 
 ```bash
 # Supabase (required)
-npx wrangler secret put SUPABASE_URL
-npx wrangler secret put SUPABASE_SERVICE_KEY
+bunx wrangler secret put SUPABASE_URL
+bunx wrangler secret put SUPABASE_SERVICE_KEY
 
 # Embedding provider (required)
-npx wrangler secret put EMBEDDING_PROVIDER  # openai | cohere | voyage | gemini
-npx wrangler secret put EMBEDDING_MODEL      # e.g. text-embedding-3-small
-npx wrangler secret put EMBEDDING_DIM        # e.g. 1024
+bunx wrangler secret put EMBEDDING_PROVIDER  # openai | cohere | voyage | gemini
+bunx wrangler secret put EMBEDDING_MODEL      # e.g. text-embedding-3-small
+bunx wrangler secret put EMBEDDING_DIM        # e.g. 1024
 
 # Provider API key (choose one based on EMBEDDING_PROVIDER)
-npx wrangler secret put OPENAI_API_KEY
-# npx wrangler secret put COHERE_API_KEY
-# npx wrangler secret put VOYAGE_API_KEY
-# npx wrangler secret put GEMINI_API_KEY
+bunx wrangler secret put OPENAI_API_KEY
+# bunx wrangler secret put COHERE_API_KEY
+# bunx wrangler secret put VOYAGE_API_KEY
+# bunx wrangler secret put GEMINI_API_KEY
 
 # Auth users (required)
-npx wrangler secret put AUTH_ALLOWED_USERS
+bunx wrangler secret put AUTH_ALLOWED_USERS
 ```
 
 #### AUTH_ALLOWED_USERS Format
@@ -75,59 +97,62 @@ To generate a hash:
 node -e "const crypto = require('crypto'); const salt = 'randomsalt123'; const password = 'yourpassword'; const hash = crypto.createHash('sha256').update(salt + password).digest('hex'); console.log('sha256:' + salt + ':' + hash);"
 ```
 
-### 4. Run Locally
+#### 4. Run Locally
 
 ```bash
-npm run dev
+bun run dev
 ```
 
 Server starts at `http://localhost:8787`.
 
-### 5. Test with MCP Inspector
+#### 5. Test with MCP Inspector
 
 ```bash
-npx @modelcontextprotocol/inspector http://localhost:8787/mcp
+bunx @modelcontextprotocol/inspector http://localhost:8787/mcp
 ```
 
 The Inspector will guide you through OAuth authorization.
 
-### 6. Deploy
+#### 6. Deploy
 
 ```bash
-npm run deploy
+bun run deploy
 ```
 
 After deployment, set secrets again for production:
 
 ```bash
-npx wrangler secret put SUPABASE_URL --env production
+bunx wrangler secret put SUPABASE_URL --env production
 # ... repeat for all secrets
 ```
 
 ## Endpoints
 
-| Endpoint | Description |
-|----------|-------------|
-| `/.well-known/oauth-authorization-server` | OAuth metadata |
-| `/register` | Dynamic client registration |
-| `/authorize` | Authorization UI (login/consent) |
-| `/token` | Token endpoint |
-| `/mcp` | MCP server (Streamable HTTP) |
-| `/mcp/sse` | MCP server (SSE) |
+| Endpoint                                  | Description                      |
+| ----------------------------------------- | -------------------------------- |
+| `/.well-known/oauth-authorization-server` | OAuth metadata                   |
+| `/register`                               | Dynamic client registration      |
+| `/authorize`                              | Authorization UI (login/consent) |
+| `/token`                                  | Token endpoint                   |
+| `/mcp`                                    | MCP server (Streamable HTTP)     |
+| `/mcp/sse`                                | MCP server (SSE)                 |
 
 ## Available Tools
 
 ### Store
+
 - `memory_store` — Store a memory with content, tags, metadata
 - `memory_store_batch` — Store multiple memories at once
 - `memory_store_decision` — Store a decision with rationale
 
 ### Search
+
 - `memory_search` — Hybrid search (semantic + keyword)
 - `memory_context` — Get context via graph traversal
 - `memory_suggest_tags` — Suggest tags based on similar memories
 
 ### CRUD
+
 - `memory_get` — Retrieve by UUID
 - `memory_recent` — List recent memories
 - `memory_tag` — List by tag
@@ -138,6 +163,7 @@ npx wrangler secret put SUPABASE_URL --env production
 - `memory_merge` — Merge multiple memories
 
 ### Graph
+
 - `memory_link` — Create edge between memories
 - `memory_unlink` — Remove edge
 - `memory_related` — Find related via traversal
@@ -145,6 +171,7 @@ npx wrangler secret put SUPABASE_URL --env production
 - `memory_impact` — Find dependents
 
 ### Admin
+
 - `memory_cleanup` — Delete expired memories
 - `memory_stats` — Get statistics
 - `memory_health` — Health check
