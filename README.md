@@ -152,7 +152,7 @@ bun scripts/memory.ts search "authentication" --graph-depth 1
 
 ## Cloudflare Workers MCP Server
 
-Deploy agent-memory as a remote MCP server for Claude Chat (web) and other MCP clients.
+Deploy agent-memory as a remote MCP server for Claude Chat (web) and other MCP clients. Useful in case your client does not support skills or has no environment to run the local helper scripts.
 
 **Features:**
 
