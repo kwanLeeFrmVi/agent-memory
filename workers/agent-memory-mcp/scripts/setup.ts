@@ -37,6 +37,7 @@ interface Config {
   providerApiKey?: string;
   authUsers?: Array<{ username: string; password_hash: string }>;
   workerName?: string;
+  apiKey?: string;
 }
 
 async function loadConfig(): Promise<Config> {
@@ -227,6 +228,92 @@ function generatePasswordHash(password: string): string {
   return `sha256:${salt}:${hash}`;
 }
 
+function generateApiKey(): string {
+  // Generate a secure random API key: am_live_<32 random hex chars>
+  const randomBytes = crypto.randomBytes(16).toString('hex');
+  return `am_live_${randomBytes}`;
+}
+
+async function getExistingApiKey(): Promise<string | null> {
+  const wranglerCmd = getWranglerCmd();
+  const result = runCommand(`${wranglerCmd} secret get API_KEY --json`);
+  if (result.success) {
+    try {
+      const parsed = JSON.parse(result.output);
+      if (parsed?.raw?.value) {
+        return parsed.raw.value;
+      }
+    } catch {}
+  }
+  // Try loading from config file
+  const config = await loadConfig();
+  return config.apiKey || null;
+}
+
+async function updateApiKey(apiKey: string): Promise<boolean> {
+  const wranglerCmd = getWranglerCmd();
+  log.info('Updating API_KEY secret...');
+  const result = runCommand(`echo "${apiKey}" | ${wranglerCmd} secret put API_KEY`);
+  if (result.success) {
+    log.success('API key updated successfully');
+    // Update local config
+    const config = await loadConfig();
+    config.apiKey = apiKey;
+    await saveConfig(config);
+    return true;
+  } else {
+    log.error('Failed to update API key');
+    log.info(result.output);
+    return false;
+  }
+}
+
+async function manageApiKey() {
+  console.log(`\n${colors.bright}${colors.cyan}╔══════════════════════════════════════════════════════════╗${colors.reset}`);
+  console.log(`${colors.bright}${colors.cyan}║              API Key Management                          ║${colors.reset}`);
+  console.log(`${colors.bright}${colors.cyan}╚══════════════════════════════════════════════════════════╝${colors.reset}\n`);
+
+  const existingKey = await getExistingApiKey();
+  
+  if (existingKey) {
+    log.info(`Current API key: ${colors.cyan}${existingKey}${colors.reset}`);
+    console.log('');
+    
+    const action = await p.select({
+      message: 'What would you like to do?',
+      choices: [
+        { name: '🔄 Generate new API key', value: 'regenerate' },
+        { name: '📋 Copy current key', value: 'copy' },
+        { name: '✅ Done', value: 'done' },
+      ],
+    });
+    
+    if (action === 'done') return;
+    if (action === 'copy') {
+      console.log(`\n${colors.cyan}${existingKey}${colors.reset}\n`);
+      log.info('Copy the key above');
+      return;
+    }
+  }
+  
+  // Generate new key
+  const newKey = generateApiKey();
+  log.info(`Generated new API key: ${colors.cyan}${newKey}${colors.reset}`);
+  console.log('');
+  
+  const shouldUpdate = await p.confirm({
+    message: 'Set this as the API_KEY secret?',
+    default: true,
+  });
+  
+  if (shouldUpdate) {
+    await updateApiKey(newKey);
+    console.log(`\n${colors.bright}Usage:${colors.reset}`);
+    console.log(`  curl https://your-worker.workers.dev/mcp \\`);
+    console.log(`    -H "Authorization: Bearer ${newKey}"`);
+  }
+}
+
 async function main() {
   console.log(`\n${colors.bright}${colors.cyan}╔══════════════════════════════════════════════════════════╗${colors.reset}`);
   console.log(`${colors.bright}${colors.cyan}║     Agent Memory MCP Server - Cloudflare Setup Wizard    ║${colors.reset}`);
@@ -238,6 +325,7 @@ async function main() {
     choices: [
       { name: '🔧 Full Setup - Configure everything from scratch', value: 'setup' },
       { name: '👤 Manage Users - Quick add/remove users only', value: 'users' },
+      { name: '🔑 Manage API Key - Generate or view API key', value: 'apikey' },
     ],
     default: 'setup',
   });
@@ -251,6 +339,17 @@ async function main() {
       process.exit(1);
     }
     await manageUsers();
+    return;
+  }
+
+  if (mode === 'apikey') {
+    const wranglerCmd = getWranglerCmd();
+    const whoami = runCommand(`${wranglerCmd} whoami`);
+    if (!whoami.success) {
+      log.error('Not logged in to Cloudflare. Please run setup first.');
+      process.exit(1);
+    }
+    await manageApiKey();
     return;
   }
 

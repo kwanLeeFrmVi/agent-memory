@@ -18,6 +18,7 @@ export type Env = {
   GEMINI_API_KEY?: string;
   // Auth
   AUTH_ALLOWED_USERS: string; // JSON array of {username, password_hash}
+  API_KEY?: string; // Bearer token for direct API access
   // KV binding for OAuth
   OAUTH_KV: KVNamespace;
   // Defaults
