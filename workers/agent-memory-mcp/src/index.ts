@@ -7,13 +7,15 @@
 import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { Env } from "./core/env.ts";
-import { createMcpServer } from "./server.ts";
+import { createMcpServer, createMcpServerLite } from "./server.ts";
 import { authHandler } from "./auth-handler.ts";
 
 // ── MCP Handler Factory ───────────────────────────────────────────────────────
 
 async function mcpHandler(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-  const server = createMcpServer(env);
+  const url = new URL(request.url);
+  const isLite = url.searchParams.get("lite") === "true";
+  const server = isLite ? createMcpServerLite(env) : createMcpServer(env);
   
   // Create web-standard streamable HTTP transport in stateless mode
   // (no sessionIdGenerator = stateless, works better with serverless)

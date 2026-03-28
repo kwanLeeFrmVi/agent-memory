@@ -463,3 +463,100 @@ export function createMcpServer(env: Env): McpServer {
 
   return server;
 }
+
+// ── Lite Server (minimal toolset for LLM efficiency) ───────────────────────────
+
+export function createMcpServerLite(env: Env): McpServer {
+  const server = new McpServer({
+    name: "agent-memory-lite",
+    version: "1.0.0",
+    description: "Core memory primitives: store, search, get, update, delete, link",
+  });
+
+  // Store
+  server.registerTool(
+    "memory_store",
+    { title: "Memory Store", description: "Store a new memory.", inputSchema: storeSchema },
+    async (params) => {
+      const result = await memoryStore(env, params);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  // Search
+  server.registerTool(
+    "memory_search",
+    { title: "Memory Search", description: "Search memories.", inputSchema: searchSchema },
+    async (params) => {
+      const result = await memorySearch(env, params);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.registerTool(
+    "memory_context",
+    { title: "Memory Context", description: "Get context via graph.", inputSchema: contextSchema },
+    async (params) => {
+      const result = await memoryContext(env, params);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.registerTool(
+    "memory_recent",
+    { title: "Memory Recent", description: "List recent memories.", inputSchema: recentSchema },
+    async (params) => {
+      const result = await memoryRecent(env, params);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  // CRUD
+  server.registerTool(
+    "memory_get",
+    { title: "Memory Get", description: "Get memory by UUID.", inputSchema: getSchema },
+    async (params) => {
+      const result = await memoryGet(env, params);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.registerTool(
+    "memory_update",
+    { title: "Memory Update", description: "Update a memory.", inputSchema: updateSchema },
+    async (params) => {
+      const result = await memoryUpdate(env, params);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.registerTool(
+    "memory_delete",
+    { title: "Memory Delete", description: "Delete memory by UUID.", inputSchema: deleteSchema },
+    async (params) => {
+      const result = await memoryDelete(env, params);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  // Graph
+  server.registerTool(
+    "memory_link",
+    { title: "Memory Link", description: "Link two memories.", inputSchema: linkSchema },
+    async (params) => {
+      const result = await memoryLink(env, params);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.registerTool(
+    "memory_unlink",
+    { title: "Memory Unlink", description: "Unlink two memories.", inputSchema: unlinkSchema },
+    async (params) => {
+      const result = await memoryUnlink(env, params);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  return server;
+}
