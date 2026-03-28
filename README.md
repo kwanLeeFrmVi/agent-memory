@@ -1,4 +1,19 @@
-# Agent Memory
+<div align="center">
+  <img src="assets/icon.png" width="75" height="75" alt="Agent Memory Icon" />
+  <h1>Agent Memory</h1>
+  <p><b>Persistent shared memory for AI agents backed by Supabase</b></p>
+  <p>
+    <a href="https://bun.sh"><img src="https://img.shields.io/badge/Bun-%23000000.svg?style=for-the-badge&logo=bun&logoColor=white" alt="Bun" /></a>
+    <a href="https://supabase.com"><img src="https://img.shields.io/badge/Supabase-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white" alt="Supabase" /></a>
+    <img src="https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript" />
+    <img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="License MIT" />
+  </p>
+  <br />
+</div>
+
+<div align="center">
+  <img src="assets/beauty_graph.png" alt="Knowledge Graph Visualization" width="100%" />
+</div>
 
 Persistent shared memory for AI agents backed by Supabase (PostgreSQL + pgvector). Memories are stored with vector embeddings for semantic search, full-text indexing for keyword search, and typed edges for a knowledge graph. Any agent or client that connects to the same Supabase project shares the same memory pool.
 
