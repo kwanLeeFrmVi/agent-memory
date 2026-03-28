@@ -23,6 +23,12 @@
  *   bun memory.ts export [--profile p] [--output file.json]
  *   bun memory.ts import <file.json> [--re-embed]
  *   bun memory.ts re-embed [--profile p] [--batch-size n]
+ *   bun memory.ts store-decision --decision "text" --rationale "text" [--alternatives t1,t2] [--reasoning-trace "text"] [--tags t1,t2] [--related uuid1,uuid2]
+ *   bun memory.ts link-unlinked [--threshold f] [--batch-size n] [--profile p] [--dry-run]
+ *   bun memory.ts set-profile-ttl --profile p --days n
+ *   bun memory.ts revert <uuid>
+ *   bun memory.ts impact <uuid>
+ *   bun memory.ts rename-tag <old> <new> [--profile p] [--dry-run]
  *
  * Env vars (AM_ prefix takes priority, falls back to unprefixed):
  *   AM_SUPABASE_URL / SUPABASE_URL
@@ -417,9 +423,22 @@ async function embedForQuery(text: string): Promise<number[]> {
 
 // ── Commands ──────────────────────────────────────────────────────────────────
 
+async function getProfileTtl(profile: string): Promise<number | null> {
+  try {
+    const rows = await supa("GET", "/rest/v1/profile_settings", undefined, {
+      profile: `eq.${profile}`,
+      select: "ttl_days",
+    }) as Record<string, unknown>[];
+    if (Array.isArray(rows) && rows.length > 0 && rows[0].ttl_days != null) {
+      return rows[0].ttl_days as number;
+    }
+  } catch { /* table may not exist yet */ }
+  return null;
+}
+
 async function cmdStore(positional: string[], flags: Record<string, string | boolean>) {
   const content = positional[0];
-  if (!content) fatal("Usage: store <content> [--tags t1,t2] [--source s] [--profile p] [--ttl days] [--metadata '{}'] [--dedup threshold] [--auto-link]");
+  if (!content) fatal("Usage: store <content> [--tags t1,t2] [--source s] [--profile p] [--ttl days] [--metadata '{}'] [--dedup threshold] [--auto-link] [--pin] [--importance 0-1]");
 
   const tagsRaw = flag(flags, "tags");
   const source = flag(flags, "source") ?? envSource();
@@ -429,6 +448,9 @@ async function cmdStore(positional: string[], flags: Record<string, string | boo
   const dedupRaw = flags["dedup"];
   const dedupThreshold = dedupRaw === true ? 0.95 : (typeof dedupRaw === "string" ? validateRange(parseFloat(dedupRaw), 0, 1, "--dedup") : null);
   const autoLink = flags["auto-link"] === true;
+  const isPinned = flags["pin"] === true;
+  const importanceRaw = flag(flags, "importance");
+  const importance = importanceRaw ? validateRange(parseFloat(importanceRaw), 0, 1, "--importance") : undefined;
 
   const embedding = await embed(content);
 
@@ -455,10 +477,15 @@ async function cmdStore(positional: string[], flags: Record<string, string | boo
     tags: tagsRaw ? parseTags(tagsRaw) : [],
     metadata: metaRaw ? safeJsonParse(metaRaw, "--metadata") : {},
     embedding_model: env("EMBEDDING_MODEL") ?? null,
+    is_pinned: isPinned,
+    ...(importance !== undefined && { importance }),
   };
 
-  if (ttlDays) {
-    const days = validatePositive(parseInt(ttlDays), "--ttl");
+  // Apply TTL from explicit flag or profile default
+  const profileTtl = ttlDays ? null : await getProfileTtl(profile);
+  const effectiveTtlStr = ttlDays ?? (profileTtl !== null ? String(profileTtl) : null);
+  if (effectiveTtlStr) {
+    const days = validatePositive(parseInt(effectiveTtlStr), "--ttl");
     const exp = new Date();
     exp.setDate(exp.getDate() + days);
     row.expires_at = exp.toISOString();
@@ -502,7 +529,7 @@ async function cmdStore(positional: string[], flags: Record<string, string | boo
 
 async function cmdSearch(positional: string[], flags: Record<string, string | boolean>) {
   const query = positional[0];
-  if (!query) fatal("Usage: search <query> [--limit n] [--threshold f] [--profile p] [--tag t] [--source s] [--min-confidence f] [--after date] [--before date]");
+  if (!query) fatal("Usage: search <query> [--limit n] [--threshold f] [--profile p] [--tag t] [--source s] [--min-confidence f] [--after date] [--before date] [--pinned] [--min-importance f] [--graph-depth n]");
 
   const limit = validatePositive(parseInt(flag(flags, "limit") ?? "10"), "--limit");
   const threshold = validateRange(parseFloat(flag(flags, "threshold") ?? "0.3"), 0, 1, "--threshold");
@@ -513,6 +540,11 @@ async function cmdSearch(positional: string[], flags: Record<string, string | bo
   const minConfidence = minConfidenceRaw ? validateRange(parseFloat(minConfidenceRaw), 0, 1, "--min-confidence") : undefined;
   const afterDate = flag(flags, "after") ?? undefined;
   const beforeDate = flag(flags, "before") ?? undefined;
+  const pinnedOnly = flags["pinned"] === true;
+  const minImportanceRaw = flag(flags, "min-importance");
+  const minImportance = minImportanceRaw ? validateRange(parseFloat(minImportanceRaw), 0, 1, "--min-importance") : undefined;
+  const graphDepthRaw = flag(flags, "graph-depth");
+  const graphDepth = graphDepthRaw ? validateNonNegative(parseInt(graphDepthRaw), "--graph-depth") : 0;
 
   const queryEmbedding = await embedForQuery(query);
 
@@ -527,6 +559,8 @@ async function cmdSearch(positional: string[], flags: Record<string, string | bo
     ...(minConfidence !== undefined && { min_confidence: minConfidence }),
     ...(afterDate && { after_date: afterDate }),
     ...(beforeDate && { before_date: beforeDate }),
+    ...(pinnedOnly && { pinned_only: true }),
+    ...(minImportance !== undefined && { min_importance: minImportance }),
   });
 
   // Bump access_count for returned results (separate VOLATILE call)
@@ -534,6 +568,32 @@ async function cmdSearch(positional: string[], flags: Record<string, string | bo
   if (rows.length > 0) {
     const ids = rows.map((r) => r.id as string);
     rpc("bump_access_count", { memory_ids: ids }).catch(() => {});
+  }
+
+  // --graph-depth: inline graph traversal on each result
+  if (graphDepth > 0 && rows.length > 0) {
+    const seen = new Set<string>(rows.map((r) => r.id as string));
+    const related: Record<string, unknown>[] = [];
+    for (const mem of rows) {
+      try {
+        const edges = await rpc("find_related_memories", {
+          start_memory_id: mem.id,
+          max_depth: graphDepth,
+          min_strength: 0.5,
+        }) as Record<string, unknown>[];
+        if (Array.isArray(edges)) {
+          for (const edge of edges) {
+            const mid = edge.memory_id as string;
+            if (!seen.has(mid)) {
+              seen.add(mid);
+              related.push(edge);
+            }
+          }
+        }
+      } catch { /* ignore */ }
+    }
+    out({ query, memories: rows, ...(related.length > 0 && { related }) });
+    return;
   }
 
   out(results);
@@ -557,17 +617,21 @@ async function cmdRecent(flags: Record<string, string | boolean>) {
   const profile = flag(flags, "profile");
   const afterDate = flag(flags, "after");
   const beforeDate = flag(flags, "before");
+  const pinnedOnly = flags["pinned"] === true;
+  const minImportanceRaw = flag(flags, "min-importance");
 
   const pairs: [string, string][] = [
     ["order", "created_at.desc"],
     ["limit", limit],
-    ["select", "id,content,source,profile,tags,metadata,confidence,access_count,created_at,expires_at"],
+    ["select", "id,content,source,profile,tags,metadata,confidence,access_count,is_pinned,importance,created_at,expires_at"],
   ];
   if (source) pairs.push(["source", `eq.${source}`]);
   if (profile) pairs.push(["profile", `eq.${profile}`]);
   if (afterDate) pairs.push(["created_at", `gte.${afterDate}`]);
   if (beforeDate) pairs.push(["created_at", `lte.${beforeDate}`]);
-  
+  if (pinnedOnly) pairs.push(["is_pinned", "eq.true"]);
+  if (minImportanceRaw) pairs.push(["importance", `gte.${validateRange(parseFloat(minImportanceRaw), 0, 1, "--min-importance")}`]);
+
   // Filter out expired memories: expires_at is null OR expires_at > now
   const now = new Date().toISOString();
   pairs.push(["or", `expires_at.is.null,expires_at.gt.${now}`]);
@@ -1168,6 +1232,238 @@ async function cmdMerge(positional: string[], flags: Record<string, string | boo
   out(clean);
 }
 
+async function cmdStoreDecision(positional: string[], flags: Record<string, string | boolean>) {
+  const decision = flag(flags, "decision");
+  const rationale = flag(flags, "rationale");
+  if (!decision || !rationale) fatal("Usage: store-decision --decision <text> --rationale <text> [--alternatives t1,t2] [--reasoning-trace <text>] [--tags t1,t2] [--related uuid1,uuid2] [--profile p] [--source s]");
+
+  const alternatives = flag(flags, "alternatives") ? parseTags(flag(flags, "alternatives")!) : [];
+  const reasoningTrace = flag(flags, "reasoning-trace");
+  const tagsRaw = flag(flags, "tags");
+  const relatedRaw = flag(flags, "related");
+  const profile = flag(flags, "profile") ?? envProfile();
+  const source = flag(flags, "source") ?? envSource();
+
+  const baseTags = tagsRaw ? parseTags(tagsRaw) : [];
+  const tags = baseTags.includes("type:decision") ? baseTags : ["type:decision", ...baseTags];
+
+  const content = rationale
+    ? `Decision: ${decision}\n\nRationale: ${rationale}`
+    : `Decision: ${decision}`;
+
+  const meta: Record<string, unknown> = { decision, rationale };
+  if (alternatives.length > 0) meta.alternatives = alternatives;
+  if (reasoningTrace) meta.reasoning_trace = reasoningTrace;
+  if (relatedRaw) meta.related_memories = parseTags(relatedRaw).map((id) => validateUuid(id, "related"));
+
+  const embedding = await embed(content);
+
+  // Dedup at 0.9 before inserting
+  const dupes = await rpc("match_memories", {
+    query_embedding: embedding,
+    match_threshold: 0.9,
+    match_count: 1,
+    profile_filter: profile,
+  }) as Record<string, unknown>[];
+  if (Array.isArray(dupes) && dupes.length > 0) {
+    out({ skipped: true, reason: "duplicate_found", similarity: dupes[0].similarity, existing: dupes[0] });
+    return;
+  }
+
+  const row: Record<string, unknown> = {
+    content,
+    embedding,
+    source,
+    profile,
+    tags,
+    metadata: meta,
+    embedding_model: env("EMBEDDING_MODEL") ?? null,
+  };
+
+  const result = await supa("POST", "/rest/v1/memories", row) as unknown[];
+  const saved = Array.isArray(result) ? result[0] : result;
+  const { embedding: _e, search_vector: _s, ...clean } = saved as Record<string, unknown>;
+
+  // Auto-create `supports` edges for --related UUIDs
+  if (relatedRaw && clean.id) {
+    const relIds = parseTags(relatedRaw);
+    for (const rid of relIds) {
+      try {
+        await supa("POST", "/rest/v1/memory_edges", {
+          source_id: clean.id,
+          target_id: rid,
+          edge_type: "supports",
+          strength: 0.8,
+        });
+      } catch { /* edge may already exist */ }
+    }
+  }
+
+  out(clean);
+}
+
+async function cmdLinkUnlinked(flags: Record<string, string | boolean>) {
+  const threshold = validateRange(parseFloat(flag(flags, "threshold") ?? "0.85"), 0, 1, "--threshold");
+  const batchSize = validatePositive(parseInt(flag(flags, "batch-size") ?? "50"), "--batch-size");
+  const profile = flag(flags, "profile") ?? undefined;
+  const dryRun = flags["dry-run"] === true;
+
+  // Fetch memories with no outgoing edges
+  const allMemories = await supa("GET", "/rest/v1/memories", undefined, [
+    ["select", "id,content,embedding"],
+    ...(profile ? [["profile", `eq.${profile}`] as [string, string]] : []),
+    ["limit", String(batchSize)],
+  ]) as Record<string, unknown>[];
+
+  const linkedSources = await supa("GET", "/rest/v1/memory_edges", undefined, [
+    ["select", "source_id"],
+  ]) as Record<string, unknown>[];
+
+  const linkedIds = new Set((linkedSources ?? []).map((r) => r.source_id as string));
+  const unlinked = (Array.isArray(allMemories) ? allMemories : []).filter((m) => !linkedIds.has(m.id as string));
+
+  let processed = 0;
+  let linked = 0;
+  let skipped = 0;
+  let errors = 0;
+
+  for (const mem of unlinked) {
+    processed++;
+    if (dryRun) continue;
+    try {
+      const embedding = await embed(mem.content as string);
+      const neighbors = await rpc("match_memories", {
+        query_embedding: embedding,
+        match_threshold: threshold,
+        match_count: 5,
+        ...(profile && { profile_filter: profile }),
+      }) as Record<string, unknown>[];
+
+      if (Array.isArray(neighbors)) {
+        for (const n of neighbors) {
+          if (n.id === mem.id) continue;
+          try {
+            await supa("POST", "/rest/v1/memory_edges", {
+              source_id: mem.id,
+              target_id: n.id,
+              edge_type: "similar",
+              strength: Math.min(n.similarity as number, 1),
+            });
+            linked++;
+          } catch { skipped++; }
+        }
+      }
+    } catch { errors++; }
+  }
+
+  out({ processed: dryRun ? unlinked.length : processed, linked, skipped, errors, dry_run: dryRun });
+}
+
+async function cmdSetProfileTtl(flags: Record<string, string | boolean>) {
+  const profile = flag(flags, "profile");
+  const daysRaw = flag(flags, "days");
+  if (!profile || daysRaw === undefined) fatal("Usage: set-profile-ttl --profile <name> --days <n>");
+
+  const days = validateNonNegative(parseInt(daysRaw), "--days");
+
+  await supa("POST", "/rest/v1/profile_settings", {
+    profile,
+    ttl_days: days === 0 ? null : days,
+  }, undefined, { Prefer: "resolution=merge-duplicates,return=representation" });
+
+  out({ profile, ttl_days: days === 0 ? null : days });
+}
+
+async function cmdRevert(positional: string[]) {
+  const id = positional[0];
+  if (!id) fatal("Usage: revert <uuid>");
+  validateUuid(id);
+
+  const result = await supa("GET", "/rest/v1/memories", undefined, { id: `eq.${id}` }) as Record<string, unknown>[];
+  if (!Array.isArray(result) || result.length === 0) fatal("Memory not found", { id });
+  const mem = result[0];
+
+  if (!mem.original_content) fatal("No original_content to revert to — memory was never compressed", { id });
+
+  const restoredContent = mem.original_content as string;
+  const newEmbedding = await embed(restoredContent);
+
+  const updated = await supa("PATCH", "/rest/v1/memories", {
+    content: restoredContent,
+    original_content: null,
+    compression_level: 0,
+    embedding: newEmbedding,
+    embedding_model: env("EMBEDDING_MODEL") ?? null,
+  }, { id: `eq.${id}` }) as unknown[];
+
+  const saved = Array.isArray(updated) ? updated[0] : updated;
+  const { embedding: _e, search_vector: _s, ...clean } = (saved ?? { id }) as Record<string, unknown>;
+  out(clean);
+}
+
+async function cmdImpact(positional: string[]) {
+  const id = positional[0];
+  if (!id) fatal("Usage: impact <uuid>");
+  validateUuid(id);
+
+  const edges = await supa("GET", "/rest/v1/memory_edges", undefined, {
+    target_id: `eq.${id}`,
+    select: "source_id,edge_type,strength",
+  }) as Record<string, unknown>[];
+
+  if (!Array.isArray(edges) || edges.length === 0) {
+    out({ id, incoming_edges: 0, memories: [] });
+    return;
+  }
+
+  const sourceIds = edges.map((e) => e.source_id as string);
+  const memories: Record<string, unknown>[] = [];
+  for (const sid of sourceIds) {
+    try {
+      const r = await supa("GET", "/rest/v1/memories", undefined, {
+        id: `eq.${sid}`,
+        select: "id,content,tags,created_at",
+      }) as Record<string, unknown>[];
+      if (Array.isArray(r) && r.length > 0) memories.push({ ...r[0], edge: edges.find((e) => e.source_id === sid) });
+    } catch { /* skip */ }
+  }
+
+  out({ id, incoming_edges: edges.length, memories });
+}
+
+async function cmdRenameTag(positional: string[], flags: Record<string, string | boolean>) {
+  const [oldTag, newTag] = positional;
+  if (!oldTag || !newTag) fatal("Usage: rename-tag <old> <new> [--profile p] [--dry-run]");
+
+  const profile = flag(flags, "profile") ?? undefined;
+  const dryRun = flags["dry-run"] === true;
+
+  const pairs: [string, string][] = [
+    ["tags", `cs.{${oldTag}}`],
+    ["select", "id,tags"],
+  ];
+  if (profile) pairs.push(["profile", `eq.${profile}`]);
+
+  const matches = await supa("GET", "/rest/v1/memories", undefined, pairs) as Record<string, unknown>[];
+  const count = Array.isArray(matches) ? matches.length : 0;
+
+  if (dryRun) {
+    out({ dry_run: true, would_rename: count, old_tag: oldTag, new_tag: newTag });
+    return;
+  }
+
+  let renamed = 0;
+  for (const mem of (Array.isArray(matches) ? matches : [])) {
+    const tags = (mem.tags as string[]).map((t) => (t === oldTag ? newTag : t));
+    try {
+      await supa("PATCH", "/rest/v1/memories", { tags }, { id: `eq.${mem.id}` });
+      renamed++;
+    } catch { /* skip */ }
+  }
+
+  out({ renamed, profile: profile ?? "all", old_tag: oldTag, new_tag: newTag });
+}
+
 async function cmdSuggestTags(positional: string[], flags: Record<string, string | boolean>) {
   const content = positional[0];
   if (!content) fatal("Usage: suggest-tags <content> [--limit n]");
@@ -1228,12 +1524,18 @@ commands:
   export       Export memories to JSON
   import       Import memories from JSON
   re-embed     Re-generate embeddings for existing memories
-  compress     Summarize a verbose memory
-  bulk-delete  Delete multiple memories by criteria
-  context      Load context for a topic (search + graph combined)
-  store-batch  Store multiple memories from a JSON array file
-  merge        Combine multiple memories into one
-  suggest-tags Suggest tags for new content
+  compress          Summarize a verbose memory
+  revert            Restore a compressed memory to its original content
+  bulk-delete       Delete multiple memories by criteria
+  context           Load context for a topic (search + graph combined)
+  store-batch       Store multiple memories from a JSON array file
+  merge             Combine multiple memories into one
+  suggest-tags      Suggest tags for new content
+  store-decision    Structured decision capture (decision + rationale + alternatives)
+  link-unlinked     Create similarity edges for orphan memories
+  set-profile-ttl   Set default TTL for a profile
+  impact            Show what depends on a memory (incoming edges)
+  rename-tag        Rename a tag across all memories in a profile
 
 Run \`bun memory.ts <command> --help\` for details on a specific command.
 
@@ -1424,7 +1726,61 @@ flags:
 Suggest tags for new content based on similar existing memories in the database.
 
 flags:
-  --limit n        Max number of tags to suggest (default: 5)`
+  --limit n        Max number of tags to suggest (default: 5)`,
+
+  "store-decision": `usage: bun memory.ts store-decision --decision <text> --rationale <text> [flags]
+
+Capture a structured architectural decision with rationale, alternatives considered, and reasoning trace.
+Automatically applies type:decision tag, runs dedup at 0.9 similarity, and creates 'supports' edges to --related memories.
+
+flags:
+  --decision text       The decision made (required)
+  --rationale text      Why this decision was made (required)
+  --alternatives t1,t2  Comma-separated list of alternatives considered
+  --reasoning-trace text Full evaluation narrative stored in metadata
+  --tags t1,t2          Additional tags (type:decision added automatically)
+  --related uuid1,uuid2 UUIDs of memories this decision supports
+  --profile p           Memory profile (default from AM_PROFILE)
+  --source s            Source identifier`,
+
+  "link-unlinked": `usage: bun memory.ts link-unlinked [flags]
+
+Scan memories with no outgoing edges and create 'similar' edges to their nearest neighbors.
+Useful after re-embed to rebuild the knowledge graph.
+
+flags:
+  --threshold f    Minimum similarity to create an edge (default: 0.85)
+  --batch-size n   Max memories to process (default: 50)
+  --profile p      Filter to a specific profile
+  --dry-run        Count orphans without writing any edges`,
+
+  "set-profile-ttl": `usage: bun memory.ts set-profile-ttl --profile <name> --days <n>
+
+Set a default TTL for all future store operations in a profile.
+Pass --days 0 to clear the default TTL.
+
+flags:
+  --profile p      Profile name (required)
+  --days n         Default TTL in days; 0 = clear (required)`,
+
+  "revert": `usage: bun memory.ts revert <uuid>
+
+Restore a compressed memory back to its original content (from original_content field).
+Also re-generates the embedding and clears compression_level back to 0.
+Fails if the memory was never compressed.`,
+
+  "impact": `usage: bun memory.ts impact <uuid>
+
+Show all memories that depend on or reference a given memory via incoming edges.
+Read-only safety check — useful before deleting a memory to see what would be affected.`,
+
+  "rename-tag": `usage: bun memory.ts rename-tag <old> <new> [flags]
+
+Rename a tag across all memories in a profile (or all profiles).
+
+flags:
+  --profile p      Limit to a specific profile
+  --dry-run        Show how many memories would be affected without writing`
 };
 
 await loadEnv();
@@ -1467,7 +1823,13 @@ switch (cmd) {
   case "bulk-delete":  await cmdBulkDelete(cliFlags); break;
   case "context":      await cmdContext(rest, cliFlags); break;
   case "store-batch":  await cmdStoreBatch(rest, cliFlags); break;
-  case "merge":        await cmdMerge(rest, cliFlags); break;
-  case "suggest-tags": await cmdSuggestTags(rest, cliFlags); break;
-  default:             fatal(`Unknown command: ${cmd}`);
+  case "merge":            await cmdMerge(rest, cliFlags); break;
+  case "suggest-tags":     await cmdSuggestTags(rest, cliFlags); break;
+  case "store-decision":   await cmdStoreDecision(rest, cliFlags); break;
+  case "link-unlinked":    await cmdLinkUnlinked(cliFlags); break;
+  case "set-profile-ttl":  await cmdSetProfileTtl(cliFlags); break;
+  case "revert":           await cmdRevert(rest); break;
+  case "impact":           await cmdImpact(rest); break;
+  case "rename-tag":       await cmdRenameTag(rest, cliFlags); break;
+  default:                 fatal(`Unknown command: ${cmd}`);
 }

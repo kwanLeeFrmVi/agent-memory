@@ -95,17 +95,39 @@ bun scripts/memory.ts search "database setup" --limit 5
 bun scripts/memory.ts related <memory-uuid> --depth 2
 ```
 
+**Store a decision** (structured, with dedup + graph edges):
+
+```bash
+bun scripts/memory.ts store-decision \
+  --decision "Use Supabase for persistent memory" \
+  --rationale "Managed Postgres + pgvector in one service" \
+  --alternatives "self-hosted postgres, pinecone"
+```
+
+**Check what depends on a memory before deleting**:
+
+```bash
+bun scripts/memory.ts impact <memory-uuid>
+```
+
+**Search with inline graph traversal**:
+
+```bash
+bun scripts/memory.ts search "authentication" --graph-depth 1
+```
+
 ## Sub-commands
 
-- **Storage & Retrieval**: `store`, `get`, `recent`, `search`, `context`
-- **Graph & Relationships**: `link`, `unlink`, `related`
-- **Management & Maintenance**: `update`, `delete`, `tag`, `profiles`, `stats`, `health`, `cleanup`
-- **Advanced Operations**: `merge`, `compress`, `bulk-delete`, `re-embed`, `store-batch`, `export`, `import`, `suggest-tags`
+- **Storage & Retrieval**: `store`, `store-decision`, `get`, `recent`, `search`, `context`
+- **Graph & Relationships**: `link`, `unlink`, `related`, `link-unlinked`, `impact`
+- **Management & Maintenance**: `update`, `delete`, `tag`, `profiles`, `stats`, `health`, `cleanup`, `set-profile-ttl`, `rename-tag`
+- **Advanced Operations**: `merge`, `compress`, `revert`, `bulk-delete`, `re-embed`, `store-batch`, `export`, `import`, `suggest-tags`
 
 ## Data Model
 
-- **memories**: Stores content, original content (if compressed), vector embeddings, JSON metadata, source, tags, TTL expiration, and metrics.
+- **memories**: Stores content, original content (if compressed), vector embeddings, JSON metadata, source, tags, TTL expiration, `is_pinned`, `importance`, and metrics.
 - **memory_edges**: Stores directed relationships between memories with edge types (`supports`, `contradicts`, `expands`, `related`, `depends_on`, `similar`) and confidence strengths.
+- **profile_settings**: Per-profile defaults (e.g., `ttl_days` for automatic TTL on `store`).
 
 ## Further Reading
 

@@ -15,10 +15,9 @@ description: |
   Trigger even when the user doesn't use the word "memory" — any request to persist, recall, or relate information across sessions qualifies.
 
   Sub-skills:
-  - **Memory ops**: store, retrieve, update, delete, compress, merge, bulk-delete, TTL
-  - **Search**: hybrid semantic+keyword search via RRF, tag/source/date filtering
-  - **Knowledge graph**: typed edges, relationship traversal, auto-linking, impact analysis
-  - **Batch & context**: store-batch, context loader, suggest-tags, dedup
+  - **Research** (capturing knowledge): store, store-decision, store-batch, compress, merge, suggest-tags, dedup, auto-link
+  - **Recall** (retrieving knowledge): search, context, get, recent, tag, related, impact
+  - **Maintain** (admin operations): update, delete, bulk-delete, re-embed, link-unlinked, rename-tag, set-profile-ttl, revert, stats, health, profiles, export, import, cleanup
 allowed-tools: Bash(bun*)
 ---
 
@@ -30,155 +29,296 @@ Persistent shared memory for AI agents backed by Supabase (PostgreSQL + pgvector
 
 All commands return clean JSON (embeddings stripped). **Parse JSON output and summarize it in natural language for the user** — do not print raw JSON arrays unless the user explicitly asks for them. When a command returns an `id`, remember it for subsequent operations in the same session.
 
-## Sub-skill routing
+After any `store` or `store-decision`, report: "Checked N for duplicates. Stored K. Skipped M (already existed). Tags used: [...]"
 
-**CRITICAL INSTRUCTION FOR AI**: DO NOT read the entire `memory.ts` source file. It is large and will consume too many context. Instead, explore the available commands and flags dynamically using the `--help` flag.
+## CRITICAL INSTRUCTION FOR AI
+
+DO NOT read the entire `memory.ts` source file. Use `--help` flags to explore commands dynamically:
 
 ```bash
 MEMORY=~/.agents/skills/agent-memory/scripts/memory.ts
-
-# List all available commands and get a brief overview:
 bun $MEMORY --help
-
-# Get detailed usage instructions for a specific command:
 bun $MEMORY store --help
 bun $MEMORY search --help
 ```
 
-Commands available include: `store`, `search`, `get`, `recent`, `tag`, `update`, `delete`, `link`, `unlink`, `related`, `cleanup`, `stats`, `health`, `profiles`, `export`, `import`, `re-embed`, `compress`, `bulk-delete`, `context`, `store-batch`, `merge`, `suggest-tags`.
+---
 
-## Common Agent Patterns
+## Research (capturing knowledge)
 
-### Starting a session / loading context
+**When to use**: User wants to persist information — decisions, gotchas, patterns, config, architecture notes.
+
+### Pre-store checklist (run before every `store`)
+
+1. **Is it worth storing?** Skip obvious/generic facts, raw tool output, temporary notes.
+2. **Does it already exist?** Run `search` with the key terms first. Skip if similarity > 0.9.
+3. **How to tag it?** Apply the taxonomy below.
+
+### Tag taxonomy
+
+| Tag | Meaning |
+|-----|---------|
+| `type:decision` | Why something was built a certain way |
+| `type:gotcha` | Bugs, workarounds, surprising behavior |
+| `type:pattern` | Conventions/approaches that worked |
+| `type:config` | Environment vars, service setup |
+| `type:architecture` | How components connect |
+| `type:reference` | Links, external docs |
+| `project:<name>` | Project namespace |
+| `branch:<name>` | Scope to git branch (skip on main/master) |
+
+Branch auto-detection: `` `git branch --show-current` ``
+
+### Storing a decision
+
+Use `store-decision` — not plain `store` — when capturing an architectural choice:
+
+```bash
+MEMORY=~/.agents/skills/agent-memory/scripts/memory.ts
+
+bun $MEMORY store-decision \
+  --decision "Use JWT for auth" \
+  --rationale "Stateless, no session store needed" \
+  --alternatives "sessions,oauth" \
+  --reasoning-trace "Evaluated 3 options. Sessions require Redis. OAuth too heavy for internal API." \
+  --tags project:myapp \
+  --related <uuid-of-auth-architecture-memory>
+```
+
+`store-decision` auto-applies `type:decision`, deduplicates at 0.9 similarity, and creates `supports` edges to any `--related` UUIDs.
+
+### Storing general knowledge
+
+```bash
+bun $MEMORY store "Postgres connection pool exhausted under load — increase max_connections in config" \
+  --tags type:gotcha,project:myapp \
+  --source claude-code \
+  --dedup \
+  --auto-link
+```
+
+Always use `--dedup` and `--auto-link` when storing to avoid duplicates and maintain the graph.
+
+### Pinning important memories
+
+Add `--pin` to mark a memory as permanently important. Pinned memories survive bulk TTL cleanups and can be retrieved with `--pinned` filter:
+
+```bash
+bun $MEMORY store "Production DB URL: postgres://..." \
+  --tags type:config \
+  --pin \
+  --importance 0.9
+```
+
+### Anti-patterns — do NOT store
+
+- Raw file contents or full code blocks
+- Tool command outputs or log dumps
+- Full conversation transcripts
+- Generic knowledge ("Python uses indentation")
+- Temporary scratch notes
+
+### Batch storing
+
+```bash
+bun $MEMORY store-batch items.json --dedup 0.9 --auto-link --profile myapp
+```
+
+---
+
+## Recall (retrieving knowledge)
+
+**When to use**: User wants to find something, load context, understand relationships, or audit before deleting.
+
+### Multi-step retrieval strategy
+
+1. Run `search "query"` — broad hybrid search
+2. If results are thin (< 3 hits), rephrase and retry
+3. Run `related <uuid>` on top hits to follow graph edges
+4. Filter by `type:decision` for past choices: `search "auth" --tag type:decision`
+5. Present as clusters grouped by graph connections, not just a ranked list
+
+### Loading context on session start
 
 When the user says "pick up where we left off", "load context", or "what was I working on":
 
 ```bash
 MEMORY=~/.agents/skills/agent-memory/scripts/memory.ts
 
-# Best: context command (search + graph traversal in one step)
-bun $MEMORY context "current topic or project name" --depth 2 --limit 5
+# Detect project from git, then load context
+PROJECT=$(git remote get-url origin 2>/dev/null | sed 's|.*/||;s|\.git$||' || echo "current project")
 
-# If the topic is vague, also check recent memories
+# Best: context command combines search + graph in one step
+bun $MEMORY context "$PROJECT" --depth 2 --limit 5
+
+# If vague, also check recent memories
 bun $MEMORY recent --limit 10
 ```
 
-Summarize the returned memories in natural language. Mention which memories are from the graph (related) vs direct search hits.
+Summarize results briefly: "Found 8 memories: 3 decisions about auth (JWT chosen, sessions rejected), 2 gotchas about DB pool exhaustion, 3 architecture notes." Let the user ask for more detail.
 
-### Storing decisions cleanly
+### Inline graph traversal during search
 
-When the user wants to remember an architectural decision, always use `--dedup` to avoid duplicates and `--auto-link` to connect related memories in the graph automatically:
+Use `--graph-depth` to get search hits plus their related memories in one call:
 
 ```bash
-bun $MEMORY store "We decided to use JWT for auth — stateless, no session store needed" \
-  --tags decision,auth \
-  --source claude-code \
-  --dedup \
-  --auto-link
+bun $MEMORY search "auth decisions" --graph-depth 1
+# Returns: { memories: [...direct hits], related: [...graph neighbors] }
 ```
 
-Use structured tags: `decision`, `bug`, `context`, `todo`, `project:<name>`. The `source` field should identify the agent or client storing the memory (e.g., `claude-code`, `cursor`).
+The `context` command is a convenience wrapper over `search --graph-depth 2`.
+
+### Checking impact before deleting
+
+Before deleting a memory, check what depends on it:
+
+```bash
+bun $MEMORY impact <uuid>
+# Returns: { incoming_edges: N, memories: [...sources that reference this] }
+```
+
+Only delete if `incoming_edges` is 0, or if you re-link dependents first.
+
+### Result presentation rules
+
+- One-line summary per memory
+- Use relative timestamps: "last week", "March 10", not raw ISO strings
+- Group graph hits with their seed memory (label them "via graph")
+- If nothing found, say "Nothing found for X" — do not hedge with "I couldn't find..."
+- Surface `type:decision` memories prominently when the user asks why something works a certain way
+
+---
+
+## Maintain (admin operations)
+
+**When to use**: System health, data hygiene, graph repair, profile management.
+
+### Profile TTL defaults
+
+Set a default TTL so all future `store` calls in a profile auto-expire:
+
+```bash
+bun $MEMORY set-profile-ttl --profile work --days 30
+bun $MEMORY set-profile-ttl --profile work --days 0   # clear the default
+```
+
+### Reverting a compressed memory
+
+If `compress` was applied and the summary is too lossy:
+
+```bash
+bun $MEMORY revert <uuid>
+# Restores original_content → content, clears compression_level, re-embeds
+```
+
+### Repairing the graph after re-embed
+
+After running `re-embed`, orphan memories lose their graph connections. Repair:
+
+```bash
+bun $MEMORY link-unlinked --threshold 0.85 --dry-run   # preview first
+bun $MEMORY link-unlinked --threshold 0.85             # then apply
+```
+
+### Renaming a tag
+
+```bash
+bun $MEMORY rename-tag bug type:gotcha --profile myapp --dry-run
+bun $MEMORY rename-tag bug type:gotcha --profile myapp
+```
 
 ### Safe bulk deletion
 
-**Always do a dry run first** before bulk-deleting. Show the count to the user and ask for confirmation:
+**Always dry-run first:**
 
 ```bash
-# Step 1: preview (safe — no writes)
 bun $MEMORY bulk-delete --tag deprecated --dry-run
-
-# Step 2: only delete after user confirms
+# Show count to user and ask for confirmation
 bun $MEMORY bulk-delete --tag deprecated
 ```
 
-Use ISO 8601 date strings for date filters: `--before 2025-01-01` or `--after 2024-06-15`.
-
-### Compressing and merging old memories
-
-When a memory is too verbose or two memories overlap significantly, compress or merge them to keep the knowledge base lean:
+### Compression and merging
 
 ```bash
-# Compress one memory (original preserved in original_content field)
-bun $MEMORY compress <uuid> "Concise one-sentence summary of the memory"
+# Compress one verbose memory (original preserved in original_content)
+bun $MEMORY compress <uuid> "One-sentence summary"
 
-# Merge two overlapping memories into one (removes originals)
+# Merge two overlapping memories
 bun $MEMORY merge <uuid1> <uuid2> --delete-originals
 ```
 
-Only compress/merge when the user explicitly asks, or when you notice clear duplication.
+Only compress/merge when the user explicitly requests it, or when duplication is obvious.
 
-### Exploring the knowledge graph
-
-To understand how a topic connects to other memories:
+### Stats and health
 
 ```bash
-# Find everything related to a specific memory
-bun $MEMORY related <uuid> --depth 2
+bun $MEMORY stats
+# Returns: total, by_profile, by_source, orphan_count, edge_count_by_type,
+#          top_accessed, pinned_count, avg_confidence, expiring_in_7d
 
-# Or use context for a topic — it combines search + graph
-bun $MEMORY context "authentication" --depth 2
+bun $MEMORY health
+# Checks: Supabase connectivity, RPC functions, embedding provider, dimension match
 ```
 
-Graph edge types: `supports`, `contradicts`, `expands`, `related`, `depends_on`, `similar`. Use `link` to manually create edges when you notice a connection the agent missed:
+---
 
-```bash
-bun $MEMORY link <uuid-a> <uuid-b> --type supports --strength 0.9
-```
-
-## Core data model (mental model)
+## Core data model
 
 ```
 memories
   id, content, original_content, embedding (vector), embedding_model
-  metadata (jsonb), source, tags[], profile
+  source, profile, tags[], metadata (jsonb)
   confidence, access_count, compression_level
+  is_pinned (bool), importance (0-1 float)
   created_at, updated_at, expires_at
 
 memory_edges
   source_id → target_id
   edge_type: supports | contradicts | expands | related | depends_on | similar
   strength (0-1)
+
+profile_settings
+  profile, ttl_days
 ```
 
-Each memory gets a vector embedding and a full-text search index automatically. Searches combine both via RRF (Reciprocal Rank Fusion) for best results.
+Each memory gets a vector embedding and a full-text search index automatically. Searches combine both via RRF (Reciprocal Rank Fusion). `is_pinned` and `importance` are filterable on all read commands.
+
+---
 
 ## Environment variables
 
-All env vars use the `AM_` prefix to avoid collisions. Falls back to unprefixed if `AM_` not set (e.g. `AM_SUPABASE_URL` → `SUPABASE_URL`), so multiple Supabase projects can coexist.
+All env vars use the `AM_` prefix to avoid collisions. Falls back to unprefixed if `AM_` not set.
 
 ```bash
 # Required — Supabase connection
 AM_SUPABASE_URL=https://<project-ref>.supabase.co
-AM_SUPABASE_SERVICE_KEY=<service_role_key>       # NOT anon key — full access needed
+AM_SUPABASE_SERVICE_KEY=<service_role_key>       # NOT anon key
 
 # Required — Pick ONE embedding provider:
 AM_EMBEDDING_PROVIDER=ollama                      # ollama | openai | cohere | voyage | gemini
-AM_EMBEDDING_MODEL=mxbai-embed-large             # model name for chosen provider
+AM_EMBEDDING_MODEL=mxbai-embed-large
 AM_EMBEDDING_DIM=768                             # must match model's output dimension
 
-# Provider-specific API keys (only the one you use):
-AM_OLLAMA_BASE_URL=http://localhost:11434         # if using Ollama
-AM_OPENAI_API_KEY=sk-...                         # if using OpenAI
-AM_COHERE_API_KEY=...                            # if using Cohere
-AM_VOYAGE_API_KEY=...                            # if using Voyage AI
-AM_GEMINI_API_KEY=...                            # if using Google Gemini
+# Provider-specific keys (only the one you use):
+AM_OLLAMA_BASE_URL=http://localhost:11434
+AM_OPENAI_API_KEY=sk-...
+AM_COHERE_API_KEY=...
+AM_VOYAGE_API_KEY=...
+AM_GEMINI_API_KEY=...
+
+# Optional defaults
+AM_SOURCE=agent
+AM_PROFILE=default
 ```
 
-### Optional defaults
-
-```bash
-AM_SOURCE=agent                                   # default source tag when --source not passed
-AM_PROFILE=default                                # default profile when --profile not passed
-```
-
-Store these in `.env` or your shell profile. The skill reads them for all operations.
+---
 
 ## Reference Documentation
 
-For more detailed information, read the following reference files located in the `references/` directory:
+For detailed information, read the `references/` directory:
 
-- `references/operations.md`: Full field reference, data model details, and edge cases.
-- `references/search.md`: Detailed parameters for hybrid search and Reciprocal Rank Fusion (RRF).
-- `references/setup.md`: One-time setup guide for pgvector and database schema deployment.
-- `references/providers.md`: Configuration details for supported embedding providers (Ollama, OpenAI, Cohere, Voyage, Gemini).
-- `references/toon-format.md`: Details about the compact TOON output format.
+- `references/operations.md`: Full field reference, data model, edge types, new fields (is_pinned, importance, profile_settings).
+- `references/search.md`: Hybrid search parameters and RRF details.
+- `references/setup.md`: One-time setup guide for pgvector and schema deployment.
+- `references/providers.md`: Embedding provider configuration (Ollama, OpenAI, Cohere, Voyage, Gemini).
+- `references/toon-format.md`: TOON compact output format.

@@ -42,6 +42,11 @@ alter table memories
   add column if not exists search_vector tsvector
   generated always as (to_tsvector('english', content)) stored;
 
+-- Extended fields (added here so functions below can reference them safely)
+alter table memories add column if not exists is_pinned boolean default false;
+alter table memories add column if not exists importance float default 0.5
+  check (importance >= 0 and importance <= 1);
+
 -- ============================================================
 -- 2. Indexes
 -- ============================================================
@@ -147,6 +152,7 @@ $$;
 -- 6. RPC: hybrid_search (semantic + keyword, RRF ranked)
 -- ============================================================
 drop function if exists hybrid_search(text, extensions.vector, int, float, int, text, text, text, float);
+drop function if exists hybrid_search(text, extensions.vector, int, float, int, text, text, text, float, timestamptz, timestamptz);
 create or replace function hybrid_search(
   query_text        text,
   query_embedding   extensions.vector,
@@ -158,7 +164,9 @@ create or replace function hybrid_search(
   tag_filter        text     default null,
   min_confidence    float    default 0,
   after_date        timestamptz default null,
-  before_date       timestamptz default null
+  before_date       timestamptz default null,
+  pinned_only       boolean  default false,
+  min_importance    float    default 0
 )
 returns table (
   id             uuid,
@@ -170,6 +178,8 @@ returns table (
   tags           text[],
   source         text,
   confidence     float,
+  is_pinned      boolean,
+  importance     float,
   created_at     timestamptz
 )
 language sql stable as $$
@@ -182,6 +192,8 @@ language sql stable as $$
       and confidence >= min_confidence
       and (after_date is null or created_at >= after_date)
       and (before_date is null or created_at <= before_date)
+      and (not pinned_only or is_pinned = true)
+      and importance >= min_importance
   ),
   semantic as (
     select id,
@@ -210,7 +222,8 @@ language sql stable as $$
   select
     m.id, m.content,
     r.rrf_score, r.semantic_rank, r.keyword_rank,
-    m.metadata, m.tags, m.source, m.confidence, m.created_at
+    m.metadata, m.tags, m.source, m.confidence,
+    m.is_pinned, m.importance, m.created_at
   from rrf r
   join base m on m.id = r.id
   order by r.rrf_score desc
@@ -337,6 +350,31 @@ language sql stable as $$
     'total', (select count(*) from memories where (profile_filter is null or profile = profile_filter) and (expires_at is null or expires_at > now())),
     'by_source', (select coalesce(json_object_agg(s, cnt), '{}') from (select coalesce(source, 'unknown') as s, count(*) as cnt from memories where (profile_filter is null or profile = profile_filter) and (expires_at is null or expires_at > now()) group by source) t),
     'by_profile', (select coalesce(json_object_agg(p, cnt), '{}') from (select coalesce(profile, 'default') as p, count(*) as cnt from memories where (expires_at is null or expires_at > now()) group by profile) t),
-    'expiring_in_7d', (select count(*) from memories where expires_at is not null and expires_at > now() and expires_at <= now() + interval '7 days' and (profile_filter is null or profile = profile_filter))
+    'expiring_in_7d', (select count(*) from memories where expires_at is not null and expires_at > now() and expires_at <= now() + interval '7 days' and (profile_filter is null or profile = profile_filter)),
+    'edge_count_by_type', (select coalesce(json_object_agg(et, cnt), '{}') from (select edge_type as et, count(*) as cnt from memory_edges group by edge_type) t),
+    'orphan_count', (select count(*) from memories m where (profile_filter is null or m.profile = profile_filter) and (m.expires_at is null or m.expires_at > now()) and m.id not in (select source_id from memory_edges) and m.id not in (select target_id from memory_edges)),
+    'top_accessed', (select coalesce(json_agg(row_to_json(t)), '[]') from (select id, content, access_count from memories where (profile_filter is null or profile = profile_filter) and (expires_at is null or expires_at > now()) order by access_count desc limit 5) t),
+    'pinned_count', (select count(*) from memories where (profile_filter is null or profile = profile_filter) and (expires_at is null or expires_at > now()) and is_pinned = true),
+    'avg_confidence', (select round(avg(confidence)::numeric, 3) from memories where (profile_filter is null or profile = profile_filter) and (expires_at is null or expires_at > now()))
   );
 $$;
+
+-- ============================================================
+-- 12. Indexes and tables for new fields
+-- ============================================================
+
+create index if not exists idx_memories_importance on memories(importance);
+create index if not exists idx_memories_pinned on memories(is_pinned) where is_pinned = true;
+
+-- Profile-level settings (e.g. default TTL)
+create table if not exists profile_settings (
+  profile     text primary key,
+  ttl_days    int default null,
+  created_at  timestamptz default now(),
+  updated_at  timestamptz default now()
+);
+
+drop trigger if exists profile_settings_updated_at on profile_settings;
+create trigger profile_settings_updated_at
+  before update on profile_settings
+  for each row execute function update_updated_at();
