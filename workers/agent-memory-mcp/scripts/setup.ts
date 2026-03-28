@@ -77,6 +77,150 @@ function runCommand(cmd: string, cwd?: string): { success: boolean; output: stri
   }
 }
 
+async function getExistingUsers(): Promise<Array<{ username: string; password_hash: string }>> {
+  const wranglerCmd = getWranglerCmd();
+  const result = runCommand(`${wranglerCmd} secret get AUTH_ALLOWED_USERS --json`);
+  if (result.success) {
+    try {
+      const parsed = JSON.parse(result.output);
+      if (parsed?.raw?.value) {
+        return JSON.parse(parsed.raw.value);
+      }
+    } catch {
+      // Fallback to trying to parse output directly
+      try {
+        return JSON.parse(result.output);
+      } catch {}
+    }
+  }
+  // Try loading from config file
+  const config = await loadConfig();
+  return config.authUsers || [];
+}
+
+async function updateAuthUsers(users: Array<{ username: string; password_hash: string }>): Promise<boolean> {
+  const wranglerCmd = getWranglerCmd();
+  const usersJson = JSON.stringify(users);
+  log.info('Updating AUTH_ALLOWED_USERS secret...');
+  const result = runCommand(`echo '${usersJson}' | ${wranglerCmd} secret put AUTH_ALLOWED_USERS`);
+  if (result.success) {
+    log.success('Auth users updated successfully');
+    // Update local config
+    const config = await loadConfig();
+    config.authUsers = users.map(u => ({ username: u.username, password_hash: '***' }));
+    await saveConfig(config);
+    return true;
+  } else {
+    log.error('Failed to update auth users');
+    log.info(result.output);
+    return false;
+  }
+}
+
+async function manageUsers() {
+  console.log(`\n${colors.bright}${colors.cyan}╔══════════════════════════════════════════════════════════╗${colors.reset}`);
+  console.log(`${colors.bright}${colors.cyan}║           User Management - Add/Remove Users              ║${colors.reset}`);
+  console.log(`${colors.bright}${colors.cyan}╚══════════════════════════════════════════════════════════╝${colors.reset}\n`);
+
+  let users = await getExistingUsers();
+  let running = true;
+
+  while (running) {
+    // Display current users
+    log.step('Current Users');
+    if (users.length === 0) {
+      console.log('  (No users configured)');
+    } else {
+      users.forEach((u, i) => {
+        console.log(`  ${i + 1}. ${colors.cyan}${u.username}${colors.reset}`);
+      });
+    }
+    console.log('');
+
+    const action = await p.select({
+      message: 'Choose an action:',
+      choices: [
+        { name: '➕ Add new user', value: 'add' },
+        { name: '➖ Remove user', value: 'remove', disabled: users.length === 0 },
+        { name: '✅ Done', value: 'done' },
+      ],
+    });
+
+    switch (action) {
+      case 'add': {
+        const username = await p.input({
+          message: 'Username:',
+          validate: (value: string) => {
+            if (value.length < 1) return 'Username is required';
+            if (users.some(u => u.username === value)) return 'Username already exists';
+            return true;
+          },
+        });
+
+        const password = await p.password({
+          message: 'Password:',
+          mask: '*',
+          validate: (value: string) => value.length >= 8 || 'Password must be at least 8 characters',
+        });
+
+        const passwordHash = generatePasswordHash(password);
+        users.push({ username, password_hash: passwordHash });
+        log.success(`User "${username}" added`);
+
+        const shouldUpdate = await p.confirm({
+          message: 'Update secret now?',
+          default: true,
+        });
+
+        if (shouldUpdate) {
+          await updateAuthUsers(users);
+        }
+        break;
+      }
+
+      case 'remove': {
+        const userToRemove = await p.select({
+          message: 'Select user to remove:',
+          choices: users.map((u, i) => ({
+            name: `${i + 1}. ${u.username}`,
+            value: i,
+          })),
+        });
+
+        const confirmRemove = await p.confirm({
+          message: `Remove user "${users[userToRemove].username}"?`,
+          default: false,
+        });
+
+        if (confirmRemove) {
+          const removed = users.splice(userToRemove, 1)[0];
+          log.success(`User "${removed.username}" removed`);
+
+          const shouldUpdate = await p.confirm({
+            message: 'Update secret now?',
+            default: true,
+          });
+
+          if (shouldUpdate) {
+            await updateAuthUsers(users);
+          }
+        }
+        break;
+      }
+
+      case 'done':
+        running = false;
+        break;
+    }
+
+    console.log('');
+  }
+
+  console.log(`${colors.bright}${colors.cyan}══════════════════════════════════════════════════════════${colors.reset}`);
+  console.log(`${colors.bright}User management complete!${colors.reset}`);
+  console.log(`${colors.bright}${colors.cyan}══════════════════════════════════════════════════════════${colors.reset}\n`);
+}
+
 function generatePasswordHash(password: string): string {
   const salt = crypto.randomBytes(8).toString('hex');
   const hash = crypto.createHash('sha256').update(salt + password).digest('hex');
@@ -87,6 +231,28 @@ async function main() {
   console.log(`\n${colors.bright}${colors.cyan}╔══════════════════════════════════════════════════════════╗${colors.reset}`);
   console.log(`${colors.bright}${colors.cyan}║     Agent Memory MCP Server - Cloudflare Setup Wizard    ║${colors.reset}`);
   console.log(`${colors.bright}${colors.cyan}╚══════════════════════════════════════════════════════════╝${colors.reset}\n`);
+
+  // Check for command line args or prompt for mode
+  const mode = await p.select({
+    message: 'What would you like to do?',
+    choices: [
+      { name: '🔧 Full Setup - Configure everything from scratch', value: 'setup' },
+      { name: '👤 Manage Users - Quick add/remove users only', value: 'users' },
+    ],
+    default: 'setup',
+  });
+
+  if (mode === 'users') {
+    const wranglerCmd = getWranglerCmd();
+    // Quick check for Cloudflare auth
+    const whoami = runCommand(`${wranglerCmd} whoami`);
+    if (!whoami.success) {
+      log.error('Not logged in to Cloudflare. Please run setup first.');
+      process.exit(1);
+    }
+    await manageUsers();
+    return;
+  }
 
   // Load existing config
   const existingConfig = await loadConfig();
