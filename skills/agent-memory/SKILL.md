@@ -1,23 +1,14 @@
 ---
 name: agent-memory
 description: |
-  Persistent, searchable shared memory for AI coding agents using Supabase + pgvector.
-  Supports Ollama and third-party embedding models (OpenAI, Cohere, Voyage AI, Google Gemini).
-  Works across any client (Claude Code, Claude.ai, Cursor, etc.) since memories live in Supabase.
+  Persistent shared memory for AI agents.
 
-  Use this skill whenever the user wants to:
-  - Store or remember something: "remember this", "save this decision", "store this context", "note that we decided to..."
-  - Recall or search memories: "what do you know about X", "recall previous decisions", "find related memories", "what did we decide about auth?"
-  - Explore relationships: "what's related to this", "show the knowledge graph", "how does X connect to Y", "trace dependencies"
-  - Start a new session: "load context", "restore memory", "what was I working on", "pick up where we left off"
-  - Set up the system: "set up shared memory", "configure memory backend", "initialize pgvector", "create memory tables"
+  Use this skill to:
+  1. Store/Persist: Save context, decisions, or knowledge across sessions ("remember this", "save decision").
+  2. Recall/Search: Retrieve past knowledge or explore relationships ("what do you know about X", "knowledge graph").
+  3. Restore Context: Pick up where you left off or load past sessions.
 
-  Trigger even when the user doesn't use the word "memory" — any request to persist, recall, or relate information across sessions qualifies.
-
-  Sub-skills:
-  - **Research** (capturing knowledge): store, store-decision, store-batch, compress, merge, suggest-tags, dedup, auto-link
-  - **Recall** (retrieving knowledge): search, context, get, recent, tag, related, impact
-  - **Maintain** (admin operations): update, delete, bulk-delete, re-embed, link-unlinked, rename-tag, set-profile-ttl, revert, stats, health, profiles, export, import, cleanup
+  Trigger for ANY request to persist, recall, or relate information across sessions.
 allowed-tools: Bash(bun*)
 ---
 
@@ -56,16 +47,16 @@ bun $MEMORY search --help
 
 ### Tag taxonomy
 
-| Tag | Meaning |
-|-----|---------|
-| `type:decision` | Why something was built a certain way |
-| `type:gotcha` | Bugs, workarounds, surprising behavior |
-| `type:pattern` | Conventions/approaches that worked |
-| `type:config` | Environment vars, service setup |
-| `type:architecture` | How components connect |
-| `type:reference` | Links, external docs |
-| `project:<name>` | Project namespace |
-| `branch:<name>` | Scope to git branch (skip on main/master) |
+| Tag                 | Meaning                                   |
+| ------------------- | ----------------------------------------- |
+| `type:decision`     | Why something was built a certain way     |
+| `type:gotcha`       | Bugs, workarounds, surprising behavior    |
+| `type:pattern`      | Conventions/approaches that worked        |
+| `type:config`       | Environment vars, service setup           |
+| `type:architecture` | How components connect                    |
+| `type:reference`    | Links, external docs                      |
+| `project:<name>`    | Project namespace                         |
+| `branch:<name>`     | Scope to git branch (skip on main/master) |
 
 Branch auto-detection: `` `git branch --show-current` ``
 
