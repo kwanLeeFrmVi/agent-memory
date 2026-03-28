@@ -1,0 +1,22 @@
+{
+  "name": "agent-memory-mcp",
+  "version": "1.0.0",
+  "description": "Cloudflare Workers MCP server for agent-memory with OAuth 2.1 authentication",
+  "main": "src/index.ts",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "cf-typegen": "wrangler types"
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "^0.3.1",
+    "@modelcontextprotocol/sdk": "^1.28.0",
+    "agents": "latest",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.2",
+    "wrangler": "^4.78.0"
+  }
+}

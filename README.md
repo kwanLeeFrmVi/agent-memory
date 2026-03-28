@@ -4,6 +4,19 @@ Persistent shared memory for AI agents backed by Supabase (PostgreSQL + pgvector
 
 This tool allows AI coding agents (Claude Code, Cursor, Claude.ai, etc.) to persist state, trace decisions, load context, and explore knowledge graphs across sessions.
 
+## Table of Contents
+
+- [Installation](#installation)
+- [Key Features](#key-features)
+- [Prerequisites](#prerequisites)
+- [Configuration](#configuration)
+- [Setup](#setup)
+- [Usage](#usage)
+- [Sub-commands](#sub-commands)
+- [Data Model](#data-model)
+- [Cloudflare Workers MCP Server](#cloudflare-workers-mcp-server)
+- [Further Reading](#further-reading)
+
 ## Installation
 
 To install this skill to your machine, run:
@@ -136,6 +149,34 @@ bun scripts/memory.ts search "authentication" --graph-depth 1
 - **memories**: Stores content, original content (if compressed), vector embeddings, JSON metadata, source, tags, TTL expiration, `is_pinned`, `importance`, and metrics.
 - **memory_edges**: Stores directed relationships between memories with edge types (`supports`, `contradicts`, `expands`, `related`, `depends_on`, `similar`) and confidence strengths.
 - **profile_settings**: Per-profile defaults (e.g., `ttl_days` for automatic TTL on `store`).
+
+## Cloudflare Workers MCP Server
+
+Deploy agent-memory as a remote MCP server for Claude Chat (web) and other MCP clients.
+
+**Features:**
+
+- 26 MCP tools (store, search, CRUD, graph, admin)
+- OAuth 2.1 authentication with PKCE
+- Streamable HTTP + SSE transports
+- Edge deployment on Cloudflare Workers
+
+**Quick Start:**
+
+```bash
+cd workers/agent-memory-mcp
+npm install
+npx wrangler kv namespace create OAUTH_KV
+# Update wrangler.toml with the KV namespace ID
+npx wrangler secret put SUPABASE_URL
+npx wrangler secret put SUPABASE_SERVICE_KEY
+npx wrangler secret put EMBEDDING_PROVIDER
+npx wrangler secret put EMBEDDING_MODEL
+npx wrangler secret put AUTH_ALLOWED_USERS
+npm run deploy
+```
+
+See [workers/agent-memory-mcp/README.md](workers/agent-memory-mcp/README.md) for full documentation.
 
 ## Further Reading
 

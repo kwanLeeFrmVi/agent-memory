@@ -1,0 +1,29 @@
+name = "agent-memory-mcp"
+main = "src/index.ts"
+compatibility_date = "2025-03-21"
+compatibility_flags = ["nodejs_compat"]
+
+# KV namespace for OAuth token storage
+[[kv_namespaces]]
+binding = "OAUTH_KV"
+id = "your-kv-namespace-id"  # Replace after: npx wrangler kv namespace create OAUTH_KV
+
+# Secrets (set via: npx wrangler secret put <NAME>)
+# - SUPABASE_URL
+# - SUPABASE_SERVICE_KEY
+# - EMBEDDING_PROVIDER
+# - EMBEDDING_MODEL
+# - EMBEDDING_DIM
+# - OPENAI_API_KEY (if provider=openai)
+# - COHERE_API_KEY (if provider=cohere)
+# - VOYAGE_API_KEY (if provider=voyage)
+# - GEMINI_API_KEY (if provider=gemini)
+# - AUTH_ALLOWED_USERS (JSON array of {username, password_hash})
+
+[vars]
+# Non-secret defaults
+DEFAULT_SOURCE = "mcp-worker"
+DEFAULT_PROFILE = "default"
+
+[build]
+command = ""  # No build needed, wrangler handles TypeScript directly
