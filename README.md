@@ -27,20 +27,22 @@ AI coding agents — Claude Code, Cursor, Claude.ai, and others — can use this
 
 ## 📑 Table of Contents
 
-| Section | What you'll find |
-|---|---|
-| [⚡ Quick Start](#-quick-start) | One-command install |
-| [✨ Features](#-features) | Full capability overview |
-| [🔧 Setup](#-setup) | Prerequisites, config & database |
-| [🚀 Usage](#-usage) | CLI commands & examples |
-| [📦 All Commands](#-all-commands) | Complete sub-command reference |
-| [🗄️ Data Model](#️-data-model) | Tables & schema overview |
-| [☁️ Cloud Deployment](#️-cloud-deployment) | Cloudflare Workers MCP server |
-| [📚 Further Reading](#-further-reading) | In-depth documentation |
+| Section                                   | What you'll find                 |
+| ----------------------------------------- | -------------------------------- |
+| [⚡ Quick Start](#-quick-start)           | One-command install              |
+| [✨ Features](#-features)                 | Full capability overview         |
+| [🔧 Setup](#-setup)                       | Prerequisites, config & database |
+| [🚀 Usage](#-usage)                       | CLI commands & examples          |
+| [📦 All Commands](#-all-commands)         | Complete sub-command reference   |
+| [🗄️ Data Model](#️-data-model)             | Tables & schema overview         |
+| [☁️ Cloud Deployment](#️-cloud-deployment) | Cloudflare Workers MCP server    |
+| [📚 Further Reading](#-further-reading)   | In-depth documentation           |
 
 ---
 
 ## ⚡ Quick Start
+
+You can easily add this skill to your AI coding environment using the `skills` CLI.
 
 ```bash
 npx skills add kwanLeeFrmVi/agent-memory
@@ -48,17 +50,30 @@ npx skills add kwanLeeFrmVi/agent-memory
 
 That's it. The skill is installed and ready to use.
 
+### Supported Environments
+
+Once added, the `agent-memory` skill is automatically available in:
+
+- **Cursor**: Use Composer or Chat and ask the agent to remember or recall context.
+- **Windsurf**: Available via Cascade.
+- **VSCode / OpenCode**: Supported via Cline, Roo Code, or any compatible AI extension.
+- **Claude Code**: Works seamlessly in the terminal.
+- **Claude Chat (Web)**: Requires [deploying to Cloudflare Workers](#%EF%B8%8F-cloud-deployment) (free). Then visit [claude.ai/settings/connectors](https://claude.ai/settings/connectors) → **Add Custom Connector** → enter your Worker URL → **Add & Connect** to authenticate via OAuth.
+- **Gemini CLI**: Automatically loaded.
+
+Simply tell your AI assistant: _"Remember this architectural decision for later"_ or _"What do you know about the database schema from our last session?"_
+
 ---
 
 ## ✨ Features
 
-| Feature | Description |
-|---|---|
-| 🧠 **Persistent Shared Memory** | Store and recall information across sessions and platforms |
-| 🔍 **Hybrid Search** | Semantic (vector) + keyword (full-text) search, merged via Reciprocal Rank Fusion |
-| 🕸️ **Knowledge Graph** | Typed relationship edges — `supports`, `contradicts`, `depends_on`, and more |
-| 🤖 **Multi-Provider Embeddings** | Ollama (local), OpenAI, Cohere, Voyage AI, Google Gemini |
-| ⚙️ **Smart Operations** | Auto-linking, dedup, compression, merging, bulk delete, TTL |
+| Feature                          | Description                                                                       |
+| -------------------------------- | --------------------------------------------------------------------------------- |
+| 🧠 **Persistent Shared Memory**  | Store and recall information across sessions and platforms                        |
+| 🔍 **Hybrid Search**             | Semantic (vector) + keyword (full-text) search, merged via Reciprocal Rank Fusion |
+| 🕸️ **Knowledge Graph**           | Typed relationship edges — `supports`, `contradicts`, `depends_on`, and more      |
+| 🤖 **Multi-Provider Embeddings** | Ollama (local), OpenAI, Cohere, Voyage AI, Google Gemini                          |
+| ⚙️ **Smart Operations**          | Auto-linking, dedup, compression, merging, bulk delete, TTL                       |
 
 ---
 
@@ -66,10 +81,10 @@ That's it. The skill is installed and ready to use.
 
 ### Prerequisites
 
-| Requirement | How to get it |
-|---|---|
-| **Bun** | `curl -fsSL https://bun.sh/install \| bash` |
-| **Supabase project** | [supabase.com](https://supabase.com/) — free tier works |
+| Requirement            | How to get it                                                       |
+| ---------------------- | ------------------------------------------------------------------- |
+| **Bun**                | `curl -fsSL https://bun.sh/install \| bash`                         |
+| **Supabase project**   | [supabase.com](https://supabase.com/) — free tier works             |
 | **Embedding provider** | Ollama locally, or an API key for OpenAI / Cohere / Voyage / Gemini |
 
 ### Database Schema
@@ -181,22 +196,22 @@ bun scripts/memory.ts search "authentication" --graph-depth 1
 
 ## 📦 All Commands
 
-| Category | Commands |
-|---|---|
-| **Storage & Retrieval** | `store` · `store-decision` · `get` · `recent` · `search` · `context` |
-| **Graph & Relationships** | `link` · `unlink` · `related` · `link-unlinked` · `impact` |
-| **Management** | `update` · `delete` · `tag` · `profiles` · `stats` · `health` · `cleanup` · `set-profile-ttl` · `rename-tag` |
-| **Advanced** | `merge` · `compress` · `revert` · `bulk-delete` · `re-embed` · `store-batch` · `export` · `import` · `suggest-tags` |
+| Category                  | Commands                                                                                                            |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| **Storage & Retrieval**   | `store` · `store-decision` · `get` · `recent` · `search` · `context`                                                |
+| **Graph & Relationships** | `link` · `unlink` · `related` · `link-unlinked` · `impact`                                                          |
+| **Management**            | `update` · `delete` · `tag` · `profiles` · `stats` · `health` · `cleanup` · `set-profile-ttl` · `rename-tag`        |
+| **Advanced**              | `merge` · `compress` · `revert` · `bulk-delete` · `re-embed` · `store-batch` · `export` · `import` · `suggest-tags` |
 
 ---
 
 ## 🗄️ Data Model
 
-| Table | Purpose |
-|---|---|
-| **`memories`** | Content, original (pre-compression) content, vector embeddings, JSON metadata, source, tags, TTL, `is_pinned`, `importance`, and access metrics |
-| **`memory_edges`** | Directed relationships between memories — edge types: `supports`, `contradicts`, `expands`, `related`, `depends_on`, `similar` — with confidence strengths |
-| **`profile_settings`** | Per-profile defaults (e.g., `ttl_days` for automatic TTL on `store`) |
+| Table                  | Purpose                                                                                                                                                    |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`memories`**         | Content, original (pre-compression) content, vector embeddings, JSON metadata, source, tags, TTL, `is_pinned`, `importance`, and access metrics            |
+| **`memory_edges`**     | Directed relationships between memories — edge types: `supports`, `contradicts`, `expands`, `related`, `depends_on`, `similar` — with confidence strengths |
+| **`profile_settings`** | Per-profile defaults (e.g., `ttl_days` for automatic TTL on `store`)                                                                                       |
 
 ---
 
@@ -204,12 +219,12 @@ bun scripts/memory.ts search "authentication" --graph-depth 1
 
 Deploy agent-memory as a **remote MCP server** on Cloudflare Workers — useful when your client doesn't support skills or has no local environment.
 
-| Capability | Detail |
-|---|---|
-| **Tools** | 26 MCP tools (store, search, CRUD, graph, admin) |
-| **Auth** | OAuth 2.1 with PKCE |
-| **Transport** | Streamable HTTP + SSE |
-| **Runtime** | Cloudflare Workers (edge) |
+| Capability    | Detail                                           |
+| ------------- | ------------------------------------------------ |
+| **Tools**     | 26 MCP tools (store, search, CRUD, graph, admin) |
+| **Auth**      | OAuth 2.1 with PKCE                              |
+| **Transport** | Streamable HTTP + SSE                            |
+| **Runtime**   | Cloudflare Workers (edge)                        |
 
 <details>
 <summary><b>🚀 Quick deploy steps (click to expand)</b></summary>
@@ -239,13 +254,13 @@ See [workers/agent-memory-mcp/README.md](workers/agent-memory-mcp/README.md) for
 
 Detailed docs live in the `references/` directory:
 
-| File | Topic |
-|---|---|
-| `operations.md` | Field references & data models |
-| `search.md` | Hybrid search & RRF specifics |
-| `setup.md` | Database schema setup |
-| `providers.md` | Embedding provider configuration |
-| `toon-format.md` | TOON output format |
+| File             | Topic                            |
+| ---------------- | -------------------------------- |
+| `operations.md`  | Field references & data models   |
+| `search.md`      | Hybrid search & RRF specifics    |
+| `setup.md`       | Database schema setup            |
+| `providers.md`   | Embedding provider configuration |
+| `toon-format.md` | TOON output format               |
 
 ---
 
